@@ -2,6 +2,7 @@ import Cocoa
 import CryptoKit
 import WebKit
 import UniformTypeIdentifiers
+import ImageIO
 
 final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     private var window: NSWindow!
@@ -251,13 +252,26 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
 
         do {
             let relative = try importAsset(source: source, for: deckURL)
+            let dimensions = imagePixelDimensions(source)
             send(function: "window.presenterNativeImageChosen", payload: [
                 "path": relative,
                 "name": source.deletingPathExtension().lastPathComponent,
+                "width": dimensions.width,
+                "height": dimensions.height,
             ])
         } catch {
             showError("Could not add image", error: error)
         }
+    }
+
+    private func imagePixelDimensions(_ source: URL) -> (width: Int, height: Int) {
+        guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return (16, 9)
+        }
+        return (max(1, width.intValue), max(1, height.intValue))
     }
 
     private func importAsset(source: URL, for deckURL: URL) throws -> String {

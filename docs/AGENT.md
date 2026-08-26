@@ -66,16 +66,19 @@ morrow-presenter add talk.morrowdeck --body-file section.txt
 ## Images
 
 Attach an existing local image. The CLI copies it into the deck's `.morrow-assets/` directory using a content hash; do not point the deck at arbitrary absolute filesystem paths.
+Image geometry uses percentages of the 16:9 slide: `x`/`y` are the full image box origin and `width` is the full image width. `height` is persisted but derived from the source aspect ratio, so resizing is proportional. Crop values are non-destructive mask insets (`left`, `top`, `right`, `bottom`, 0–95); they never rewrite the asset file.
 
 ```bash
 morrow-presenter image-set deck.morrowdeck 2 ./diagram.png \
-  --placement right --fit contain --alt "System architecture" --json
+  --x 52 --y 18 --width 38 --alt "System architecture" --json
 ```
 
 Update display metadata without needing the original source image again:
 
 ```bash
-morrow-presenter image-update deck.morrowdeck 2 --placement background --fit cover --alt "Datacenter overview" --json
+morrow-presenter image-update deck.morrowdeck 2 --x 44 --y 12 --scale 1.2 --alt "Datacenter overview" --json
+morrow-presenter image-update deck.morrowdeck 2 --crop-left 8 --crop-right 12 --crop-top 4 --json
+morrow-presenter image-update deck.morrowdeck 2 --reset-crop --json
 ```
 
 Remove the image attachment without deleting the shared content-addressed asset:
@@ -84,7 +87,7 @@ Remove the image attachment without deleting the shared content-addressed asset:
 morrow-presenter image-remove deck.morrowdeck 2 --json
 ```
 
-Placements are `right`, `left`, `background`, and `full`. Fits are `cover` and `contain`. `get`, `slides`, `schema`, and `capabilities` expose image metadata for agents. `export` copies referenced assets when exporting to another directory.
+`get`, `slides`, `schema`, and `capabilities` expose image path, intrinsic dimensions, free geometry, and crop-mask metadata for agents. `export` copies referenced assets when exporting to another directory. GUI dragging updates `x`/`y`; proportional resize updates `width`/`height`; crop mode updates only mask insets.
 
 ## Machine-readable output
 
@@ -125,6 +128,9 @@ For normal editing, prefer CLI mutations and do not launch the app at all. Use `
 | Duplicate slide | `duplicate` |
 | Delete slide | `delete` |
 | Reorder slide | `move` |
+| Attach/replace image | `image-set` |
+| Move/scale/crop image | `image-update` |
+| Remove image | `image-remove` |
 | Validate file | `validate` |
 | Normalize/export copy | `export` |
 | Open editor | `open` |

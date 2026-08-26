@@ -17,8 +17,8 @@ COPY="$TMP_DIR/copy.json"
 "$CLI" title "$DECK" "Smoke Renamed" >/dev/null
 SYSTEM_IMAGE="/System/Library/Image Capture/Automatic Tasks/MakePDF.app/Contents/Resources/horiz.jpg"
 if [[ -f "$SYSTEM_IMAGE" ]]; then
-  "$CLI" image-set "$DECK" 2 "$SYSTEM_IMAGE" --placement right --fit contain --alt "System test image" >/dev/null
-  "$CLI" image-update "$DECK" 2 --placement left --fit cover --alt "Updated system image" >/dev/null
+  "$CLI" image-set "$DECK" 2 "$SYSTEM_IMAGE" --x 11 --y 17 --width 36 --alt "System test image" >/dev/null
+  "$CLI" image-update "$DECK" 2 --x 19 --y 8 --scale 1.25 --crop-left 7 --crop-top 4 --crop-right 9 --crop-bottom 6 --alt "Updated system image" >/dev/null
 fi
 "$CLI" validate "$DECK" --json >/dev/null
 "$CLI" export "$DECK" "$COPY" >/dev/null
@@ -39,8 +39,12 @@ assert deck["slides"][1]["title"] == "Problem"
 assert deck["slides"][1]["body"] == "One\nTwo"
 if "image" in deck["slides"][1]:
     image = deck["slides"][1]["image"]
-    assert image["placement"] == "left"
-    assert image["fit"] == "cover"
+    assert image["x"] == 19.0
+    assert image["y"] == 8.0
+    assert image["width"] == 45.0
+    assert image["height"] > 0
+    assert image["intrinsicWidth"] > 0 and image["intrinsicHeight"] > 0
+    assert image["crop"] == {"left": 7.0, "top": 4.0, "right": 9.0, "bottom": 6.0}
     assert image["alt"] == "Updated system image"
     assert image["path"].startswith(".morrow-assets/")
     assert (Path(sys.argv[1]).parent / image["path"]).is_file()

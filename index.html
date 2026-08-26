@@ -41,16 +41,9 @@
         </label>
         <button id="choose-image" class="ghost">添加图片</button>
         <div id="image-controls" class="image-controls" hidden>
-          <select id="image-placement" aria-label="图片位置" title="图片位置">
-            <option value="right">右侧</option>
-            <option value="left">左侧</option>
-            <option value="background">背景</option>
-            <option value="full">全屏图片</option>
-          </select>
-          <select id="image-fit" aria-label="图片适配" title="图片适配">
-            <option value="cover">裁切填充</option>
-            <option value="contain">完整显示</option>
-          </select>
+          <button id="image-crop-toggle" class="ghost" title="用遮罩裁切，不修改原图">裁切</button>
+          <button id="image-crop-reset" class="ghost" title="清除裁切遮罩">重置裁切</button>
+          <span id="image-geometry" class="image-geometry" title="图片在 slide 中的坐标和完整宽度"></span>
           <input id="image-alt" class="image-alt" type="text" placeholder="图片说明" aria-label="图片说明" />
           <button id="remove-image" class="danger-ghost">移除图片</button>
         </div>

@@ -26,7 +26,7 @@ morrow-presenter capabilities --json
 ## GUI 功能
 
 - 标题、标题 + 正文、章节页三种布局
-- 本地图片：左/右分栏、背景图、全屏图，支持 `cover` / `contain`
+- 本地图片：可在 slide 任意位置拖动；右下控制点等比缩放；裁切模式用遮罩隐藏边缘，不修改原图
 - 图片自动复制到 deck 同目录的 `.morrow-assets/`，使用内容 hash 去重
 - 缩略图选择和拖拽排序
 - 新增、复制、删除 slide
@@ -54,8 +54,10 @@ morrow-presenter present demo.morrowdeck
 ### 图片
 
 ```bash
-morrow-presenter image-set demo.morrowdeck 2 ./diagram.png --placement right --fit contain --alt "Architecture"
-morrow-presenter image-update demo.morrowdeck 2 --placement background --fit cover
+morrow-presenter image-set demo.morrowdeck 2 ./diagram.png --x 52 --y 18 --width 38 --alt "Architecture"
+morrow-presenter image-update demo.morrowdeck 2 --x 44 --y 12 --scale 1.2
+morrow-presenter image-update demo.morrowdeck 2 --crop-left 8 --crop-right 12 --crop-top 4
+morrow-presenter image-update demo.morrowdeck 2 --reset-crop
 morrow-presenter image-remove demo.morrowdeck 2
 ```
 
@@ -69,4 +71,4 @@ Presenter 只使用已有本地图片文件，不负责生成图片。
 
 产物：`dist/Morrow Presenter.app`。
 
-当前 MVP 暂不包含图片、动画、Presenter View、多显示器编排、PPTX/PDF 导入导出和云端协作。
+当前 MVP 暂不包含动画、Presenter View、多显示器编排、PPTX/PDF 导入导出和云端协作。

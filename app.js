@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'morrow-presenter.deck.v1';
 const VALID_LAYOUTS = new Set(['title-body', 'title', 'section']);
-const VALID_IMAGE_FITS = new Set(['cover', 'contain']);
-const VALID_IMAGE_PLACEMENTS = new Set(['right', 'left', 'background', 'full']);
+const SLIDE_ASPECT = 16 / 9;
+const DEFAULT_IMAGE_WIDTH = 40;
 const isNative = Boolean(window.webkit?.messageHandlers?.presenter);
 
 const el = {
@@ -11,8 +11,9 @@ const el = {
   layoutSelect: document.querySelector('#layout-select'),
   chooseImage: document.querySelector('#choose-image'),
   imageControls: document.querySelector('#image-controls'),
-  imagePlacement: document.querySelector('#image-placement'),
-  imageFit: document.querySelector('#image-fit'),
+  imageCropToggle: document.querySelector('#image-crop-toggle'),
+  imageCropReset: document.querySelector('#image-crop-reset'),
+  imageGeometry: document.querySelector('#image-geometry'),
   imageAlt: document.querySelector('#image-alt'),
   removeImage: document.querySelector('#remove-image'),
   addSlide: document.querySelector('#add-slide'),
@@ -37,6 +38,32 @@ function uid() {
   return crypto.randomUUID?.() ?? `slide-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function numberOr(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function clamp(value, low, high) {
+  return Math.max(low, Math.min(high, value));
+}
+
+function imageHeightForWidth(width, intrinsicWidth, intrinsicHeight) {
+  const aspect = intrinsicWidth > 0 && intrinsicHeight > 0 ? intrinsicWidth / intrinsicHeight : SLIDE_ASPECT;
+  return width * SLIDE_ASPECT / aspect;
+}
+
+function normalizeCrop(candidate) {
+  const crop = candidate && typeof candidate === 'object' ? candidate : {};
+  const normalized = {
+    left: clamp(numberOr(crop.left, 0), 0, 95),
+    top: clamp(numberOr(crop.top, 0), 0, 95),
+    right: clamp(numberOr(crop.right, 0), 0, 95),
+    bottom: clamp(numberOr(crop.bottom, 0), 0, 95),
+  };
+  if (normalized.left + normalized.right > 95) normalized.right = Math.max(0, 95 - normalized.left);
+  if (normalized.top + normalized.bottom > 95) normalized.bottom = Math.max(0, 95 - normalized.top);
+  return normalized;
+}
+
 function normalizeImage(candidate) {
   if (candidate == null) return null;
   if (typeof candidate !== 'object' || typeof candidate.path !== 'string' || !candidate.path.trim()) {
@@ -45,11 +72,35 @@ function normalizeImage(candidate) {
   const path = candidate.path.replace(/\\/g, '/');
   const parts = path.split('/');
   if (path.startsWith('/') || parts.includes('..')) throw new Error('Image path must stay inside the deck directory');
+
+  const intrinsicWidth = Math.max(1, numberOr(candidate.intrinsicWidth, 16));
+  const intrinsicHeight = Math.max(1, numberOr(candidate.intrinsicHeight, 9));
+  let width;
+  let x;
+  let y;
+  if (candidate.x == null && ['right', 'left', 'background', 'full'].includes(candidate.placement)) {
+    if (candidate.placement === 'right') { width = 40; x = 55; }
+    else if (candidate.placement === 'left') { width = 40; x = 5; }
+    else { width = 100; x = 0; }
+    const legacyHeight = imageHeightForWidth(width, intrinsicWidth, intrinsicHeight);
+    y = (100 - legacyHeight) / 2;
+  } else {
+    width = clamp(numberOr(candidate.width, DEFAULT_IMAGE_WIDTH), 1, 400);
+    const height = imageHeightForWidth(width, intrinsicWidth, intrinsicHeight);
+    x = clamp(numberOr(candidate.x, 50), -300, 300);
+    y = clamp(numberOr(candidate.y, (100 - height) / 2), -300, 300);
+  }
+  const height = imageHeightForWidth(width, intrinsicWidth, intrinsicHeight);
   return {
     path,
     alt: typeof candidate.alt === 'string' ? candidate.alt : '',
-    fit: VALID_IMAGE_FITS.has(candidate.fit) ? candidate.fit : 'cover',
-    placement: VALID_IMAGE_PLACEMENTS.has(candidate.placement) ? candidate.placement : 'right',
+    x,
+    y,
+    width,
+    height,
+    intrinsicWidth,
+    intrinsicHeight,
+    crop: normalizeCrop(candidate.crop),
   };
 }
 
@@ -108,6 +159,7 @@ let currentPath = null;
 let presentationIndex = 0;
 let savePulse;
 let autosaveTimer;
+let cropMode = false;
 const assetCache = new Map();
 const assetWaiters = new Map();
 const assetRequests = new Map();
@@ -151,21 +203,212 @@ function loadAssetInto(imageElement, path) {
   nativePost('loadAsset', { requestId, path });
 }
 
-function makeImageFrame(image, wrapClass, imageClass) {
-  const wrap = document.createElement('div');
-  wrap.className = `${wrapClass} placement-${image.placement}`;
+function cropClipPath(image) {
+  const { top, right, bottom, left } = image.crop;
+  return `inset(${top}% ${right}% ${bottom}% ${left}%)`;
+}
+
+function applyImageFrameGeometry(frame, image) {
+  frame.style.left = `${image.x}%`;
+  frame.style.top = `${image.y}%`;
+  frame.style.width = `${image.width}%`;
+  frame.style.height = `${image.height}%`;
+  frame.querySelectorAll('.image-main').forEach((img) => { img.style.clipPath = cropClipPath(image); });
+
+  const { left, top, right, bottom } = image.crop;
+  const visibleWidth = 100 - left - right;
+  const visibleHeight = 100 - top - bottom;
+  const outline = frame.querySelector('.image-crop-outline');
+  if (outline) {
+    outline.style.left = `${left}%`;
+    outline.style.top = `${top}%`;
+    outline.style.width = `${visibleWidth}%`;
+    outline.style.height = `${visibleHeight}%`;
+  }
+  const resize = frame.querySelector('.image-resize-handle');
+  if (resize) {
+    resize.style.left = `${100 - right}%`;
+    resize.style.top = `${100 - bottom}%`;
+  }
+  const handles = {
+    left: frame.querySelector('.crop-handle-left'),
+    right: frame.querySelector('.crop-handle-right'),
+    top: frame.querySelector('.crop-handle-top'),
+    bottom: frame.querySelector('.crop-handle-bottom'),
+  };
+  if (handles.left) { handles.left.style.left = `${left}%`; handles.left.style.top = `${top}%`; handles.left.style.height = `${visibleHeight}%`; }
+  if (handles.right) { handles.right.style.left = `${100 - right}%`; handles.right.style.top = `${top}%`; handles.right.style.height = `${visibleHeight}%`; }
+  if (handles.top) { handles.top.style.left = `${left}%`; handles.top.style.top = `${top}%`; handles.top.style.width = `${visibleWidth}%`; }
+  if (handles.bottom) { handles.bottom.style.left = `${left}%`; handles.bottom.style.top = `${100 - bottom}%`; handles.bottom.style.width = `${visibleWidth}%`; }
+}
+
+function finishImageInteraction() {
+  persist();
+  renderList();
+  syncImageControls();
+}
+
+function startImageMove(event, frame, image) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const rect = el.slideCanvas.getBoundingClientRect();
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const originX = image.x;
+  const originY = image.y;
+  const crop = image.crop;
+  const minX = 2 - image.width * (1 - crop.right / 100);
+  const maxX = 98 - image.width * (crop.left / 100);
+  const minY = 2 - image.height * (1 - crop.bottom / 100);
+  const maxY = 98 - image.height * (crop.top / 100);
+
+  const move = (next) => {
+    image.x = clamp(originX + ((next.clientX - startX) / rect.width) * 100, minX, maxX);
+    image.y = clamp(originY + ((next.clientY - startY) / rect.height) * 100, minY, maxY);
+    applyImageFrameGeometry(frame, image);
+    syncImageControls();
+  };
+  const end = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    finishImageInteraction();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end, { once: true });
+  window.addEventListener('pointercancel', end, { once: true });
+}
+
+function startImageResize(event, frame, image) {
+  event.stopPropagation();
+  event.preventDefault();
+  const rect = el.slideCanvas.getBoundingClientRect();
+  const fullWidthPx = image.width / 100 * rect.width;
+  const fullHeightPx = image.height / 100 * rect.height;
+  const left = image.crop.left / 100;
+  const top = image.crop.top / 100;
+  const right = image.crop.right / 100;
+  const bottom = image.crop.bottom / 100;
+  const visibleWidthPx = fullWidthPx * (1 - left - right);
+  const visibleHeightPx = fullHeightPx * (1 - top - bottom);
+  const anchorX = image.x / 100 * rect.width + fullWidthPx * left;
+  const anchorY = image.y / 100 * rect.height + fullHeightPx * top;
+  const denominator = visibleWidthPx * visibleWidthPx + visibleHeightPx * visibleHeightPx;
+  const originalWidth = image.width;
+  const originalHeight = image.height;
+
+  const move = (next) => {
+    const targetX = next.clientX - rect.left - anchorX;
+    const targetY = next.clientY - rect.top - anchorY;
+    let scale = denominator > 0 ? (targetX * visibleWidthPx + targetY * visibleHeightPx) / denominator : 1;
+    scale = clamp(scale, 3 / originalWidth, 400 / originalWidth);
+    image.width = originalWidth * scale;
+    image.height = originalHeight * scale;
+    const newFullWidthPx = image.width / 100 * rect.width;
+    const newFullHeightPx = image.height / 100 * rect.height;
+    image.x = (anchorX - newFullWidthPx * left) / rect.width * 100;
+    image.y = (anchorY - newFullHeightPx * top) / rect.height * 100;
+    applyImageFrameGeometry(frame, image);
+    syncImageControls();
+  };
+  const end = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    finishImageInteraction();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end, { once: true });
+  window.addEventListener('pointercancel', end, { once: true });
+}
+
+function startCropEdge(event, frame, image, side) {
+  event.stopPropagation();
+  event.preventDefault();
+  const rect = el.slideCanvas.getBoundingClientRect();
+  const fullLeft = image.x / 100 * rect.width;
+  const fullTop = image.y / 100 * rect.height;
+  const fullWidth = image.width / 100 * rect.width;
+  const fullHeight = image.height / 100 * rect.height;
+  const initial = { ...image.crop };
+
+  const move = (next) => {
+    if (side === 'left') {
+      const value = ((next.clientX - rect.left - fullLeft) / fullWidth) * 100;
+      image.crop.left = clamp(value, 0, 95 - initial.right);
+    } else if (side === 'right') {
+      const value = 100 - ((next.clientX - rect.left - fullLeft) / fullWidth) * 100;
+      image.crop.right = clamp(value, 0, 95 - initial.left);
+    } else if (side === 'top') {
+      const value = ((next.clientY - rect.top - fullTop) / fullHeight) * 100;
+      image.crop.top = clamp(value, 0, 95 - initial.bottom);
+    } else if (side === 'bottom') {
+      const value = 100 - ((next.clientY - rect.top - fullTop) / fullHeight) * 100;
+      image.crop.bottom = clamp(value, 0, 95 - initial.top);
+    }
+    applyImageFrameGeometry(frame, image);
+    syncImageControls();
+  };
+  const end = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    finishImageInteraction();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end, { once: true });
+  window.addEventListener('pointercancel', end, { once: true });
+}
+
+function makeImageFrame(image, wrapClass, imageClass, options = {}) {
+  const interactive = Boolean(options.interactive);
+  const frame = document.createElement('div');
+  frame.className = `${wrapClass} free-image-frame${interactive ? ' image-editor-frame' : ''}${interactive && cropMode ? ' crop-mode' : ''}`;
+
+  if (interactive) {
+    const ghost = document.createElement('img');
+    ghost.className = `${imageClass} image-crop-ghost`;
+    ghost.alt = '';
+    ghost.draggable = false;
+    frame.append(ghost);
+    loadAssetInto(ghost, image.path);
+  }
+
   const img = document.createElement('img');
-  img.className = `${imageClass} fit-${image.fit}`;
+  img.className = `${imageClass} image-main`;
   img.alt = image.alt || '';
   img.draggable = false;
   img.addEventListener('load', () => nativePost('assetRendered', { path: image.path }), { once: true });
-  wrap.append(img);
+  frame.append(img);
   loadAssetInto(img, image.path);
-  return wrap;
+
+  if (interactive) {
+    const outline = document.createElement('div');
+    outline.className = 'image-crop-outline';
+    frame.append(outline);
+
+    const resize = document.createElement('div');
+    resize.className = 'image-resize-handle';
+    resize.title = '拖动以等比缩放';
+    resize.addEventListener('pointerdown', (event) => startImageResize(event, frame, image));
+    frame.append(resize);
+
+    for (const side of ['left', 'right', 'top', 'bottom']) {
+      const handle = document.createElement('div');
+      handle.className = `image-crop-handle crop-handle-${side}`;
+      handle.title = `裁切 ${side}`;
+      handle.addEventListener('pointerdown', (event) => startCropEdge(event, frame, image, side));
+      frame.append(handle);
+    }
+    img.addEventListener('pointerdown', (event) => startImageMove(event, frame, image));
+  }
+
+  applyImageFrameGeometry(frame, image);
+  return frame;
 }
 
 function imageClassSuffix(slide) {
-  return slide.image ? ` has-image placement-${slide.image.placement}` : '';
+  return slide.image ? ' has-image' : '';
 }
 
 window.addEventListener('error', (event) => {
@@ -306,7 +549,7 @@ function renderEditor() {
 
   text.append(title, body);
   content.append(text);
-  if (slide.image) content.append(makeImageFrame(slide.image, 'slide-image-wrap', 'slide-image'));
+  if (slide.image) content.append(makeImageFrame(slide.image, 'slide-image-wrap', 'slide-image', { interactive: true }));
   el.slideCanvas.append(content);
   syncImageControls();
 }
@@ -316,17 +559,12 @@ function syncImageControls() {
   el.chooseImage.textContent = image ? '替换图片' : '添加图片';
   el.imageControls.hidden = !image;
   if (!image) return;
-  el.imagePlacement.value = image.placement;
-  el.imageFit.value = image.fit;
+  el.imageCropToggle.classList.toggle('active', cropMode);
+  el.imageCropToggle.textContent = cropMode ? '完成裁切' : '裁切';
+  const crop = image.crop;
+  el.imageCropReset.disabled = crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0;
+  el.imageGeometry.textContent = `x ${image.x.toFixed(1)} · y ${image.y.toFixed(1)} · w ${image.width.toFixed(1)}%`;
   el.imageAlt.value = image.alt;
-}
-
-function updateImage(patch) {
-  const slide = selectedSlide();
-  if (!slide?.image) return;
-  slide.image = { ...slide.image, ...patch };
-  persist();
-  render();
 }
 
 function chooseImage() {
@@ -337,10 +575,25 @@ function chooseImage() {
   nativePost('chooseImage', { deck: state });
 }
 
+function toggleCropMode() {
+  if (!selectedSlide()?.image) return;
+  cropMode = !cropMode;
+  renderEditor();
+}
+
+function resetImageCrop() {
+  const slide = selectedSlide();
+  if (!slide?.image) return;
+  slide.image.crop = { left: 0, top: 0, right: 0, bottom: 0 };
+  persist();
+  render();
+}
+
 function removeImage() {
   const slide = selectedSlide();
   if (!slide?.image) return;
   delete slide.image;
+  cropMode = false;
   persist();
   render();
 }
@@ -352,6 +605,7 @@ function renderStatus() {
 function selectSlide(id) {
   if (!state.slides.some((slide) => slide.id === id)) return;
   state.selectedId = id;
+  cropMode = false;
   persist();
   renderList();
   renderEditor();
@@ -545,10 +799,25 @@ window.presenterNativeExternalLoad = ({ json, path }) => {
   }
 };
 
-window.presenterNativeImageChosen = ({ path, name }) => {
+window.presenterNativeImageChosen = ({ path, name, width, height }) => {
   const slide = selectedSlide();
   if (!slide) return;
-  slide.image = { path, alt: name || '', fit: 'cover', placement: 'right' };
+  const intrinsicWidth = Math.max(1, numberOr(width, 16));
+  const intrinsicHeight = Math.max(1, numberOr(height, 9));
+  const imageWidth = DEFAULT_IMAGE_WIDTH;
+  const imageHeight = imageHeightForWidth(imageWidth, intrinsicWidth, intrinsicHeight);
+  slide.image = {
+    path,
+    alt: name || '',
+    x: 55,
+    y: (100 - imageHeight) / 2,
+    width: imageWidth,
+    height: imageHeight,
+    intrinsicWidth,
+    intrinsicHeight,
+    crop: { left: 0, top: 0, right: 0, bottom: 0 },
+  };
+  cropMode = false;
   persist();
   render();
 };
@@ -595,8 +864,8 @@ el.layoutSelect.addEventListener('change', () => {
 });
 el.chooseImage.addEventListener('click', chooseImage);
 el.removeImage.addEventListener('click', removeImage);
-el.imagePlacement.addEventListener('change', () => updateImage({ placement: el.imagePlacement.value }));
-el.imageFit.addEventListener('change', () => updateImage({ fit: el.imageFit.value }));
+el.imageCropToggle.addEventListener('click', toggleCropMode);
+el.imageCropReset.addEventListener('click', resetImageCrop);
 el.imageAlt.addEventListener('input', () => {
   const slide = selectedSlide();
   if (!slide?.image) return;

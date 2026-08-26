@@ -19,8 +19,8 @@ import uuid
 
 VERSION = 1
 VALID_LAYOUTS = ("title-body", "title", "section")
-VALID_IMAGE_FITS = ("cover", "contain")
-VALID_IMAGE_PLACEMENTS = ("right", "left", "background", "full")
+SLIDE_ASPECT = 16 / 9
+DEFAULT_IMAGE_WIDTH = 40.0
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
 ASSET_DIR = ".morrow-assets"
 APP_CANDIDATES = (
@@ -28,6 +28,32 @@ APP_CANDIDATES = (
     Path.home() / "Applications" / "Morrow Presenter.app",
     Path(__file__).resolve().parents[1] / "dist" / "Morrow Presenter.app",
 )
+
+
+def _number(value: object, default: float) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def image_height_for_width(width: float, intrinsic_width: float, intrinsic_height: float) -> float:
+    aspect = intrinsic_width / intrinsic_height if intrinsic_width > 0 and intrinsic_height > 0 else SLIDE_ASPECT
+    return width * SLIDE_ASPECT / aspect
+
+
+def normalize_crop(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    left = _clamp(_number(raw.get("left"), 0.0), 0.0, 95.0)
+    top = _clamp(_number(raw.get("top"), 0.0), 0.0, 95.0)
+    right = _clamp(_number(raw.get("right"), 0.0), 0.0, 95.0)
+    bottom = _clamp(_number(raw.get("bottom"), 0.0), 0.0, 95.0)
+    if left + right > 95.0:
+        right = max(0.0, 95.0 - left)
+    if top + bottom > 95.0:
+        bottom = max(0.0, 95.0 - top)
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
 
 
 def normalize_image(raw: object) -> dict | None:
@@ -42,11 +68,37 @@ def normalize_image(raw: object) -> dict | None:
     candidate = Path(path)
     if candidate.is_absolute() or ".." in candidate.parts:
         raise ValueError("slide.image.path must stay inside the deck directory")
+
+    intrinsic_width = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
+    intrinsic_height = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
+
+    # Migrate v1 fixed-placement images into a reasonable free-positioned box.
+    placement = raw.get("placement")
+    if "x" not in raw and placement in {"right", "left", "background", "full"}:
+        if placement == "right":
+            width, x = 40.0, 55.0
+        elif placement == "left":
+            width, x = 40.0, 5.0
+        else:
+            width, x = 100.0, 0.0
+        height = image_height_for_width(width, intrinsic_width, intrinsic_height)
+        y = (100.0 - height) / 2.0
+    else:
+        width = _clamp(_number(raw.get("width"), DEFAULT_IMAGE_WIDTH), 1.0, 400.0)
+        height = image_height_for_width(width, intrinsic_width, intrinsic_height)
+        x = _clamp(_number(raw.get("x"), 50.0), -300.0, 300.0)
+        y = _clamp(_number(raw.get("y"), (100.0 - height) / 2.0), -300.0, 300.0)
+
     return {
         "path": path,
         "alt": raw.get("alt") if isinstance(raw.get("alt"), str) else "",
-        "fit": raw.get("fit") if raw.get("fit") in VALID_IMAGE_FITS else "cover",
-        "placement": raw.get("placement") if raw.get("placement") in VALID_IMAGE_PLACEMENTS else "right",
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "intrinsicWidth": intrinsic_width,
+        "intrinsicHeight": intrinsic_height,
+        "crop": normalize_crop(raw.get("crop")),
     }
 
 
@@ -144,6 +196,27 @@ def import_asset(deck_path: Path, source: Path) -> str:
     if not target.exists():
         shutil.copyfile(source, target)
     return rel.as_posix()
+
+
+def image_dimensions(source: Path) -> tuple[float, float]:
+    source = source.expanduser().resolve()
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/sips", "-g", "pixelWidth", "-g", "pixelHeight", str(source)],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        width = height = None
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("pixelWidth:"):
+                width = float(line.split(":", 1)[1].strip())
+            elif line.startswith("pixelHeight:"):
+                height = float(line.split(":", 1)[1].strip())
+        if width and height:
+            return width, height
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    return 16.0, 9.0
 
 
 def copy_assets(deck: dict, source_deck: Path, target_deck: Path) -> None:
@@ -256,12 +329,26 @@ def schema() -> dict:
                         "body": {"type": "string"},
                         "image": {
                             "type": "object",
-                            "required": ["path", "alt", "fit", "placement"],
+                            "required": ["path", "alt", "x", "y", "width", "height", "intrinsicWidth", "intrinsicHeight", "crop"],
                             "properties": {
                                 "path": {"type": "string", "minLength": 1},
                                 "alt": {"type": "string"},
-                                "fit": {"enum": list(VALID_IMAGE_FITS)},
-                                "placement": {"enum": list(VALID_IMAGE_PLACEMENTS)},
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "width": {"type": "number", "exclusiveMinimum": 0},
+                                "height": {"type": "number", "exclusiveMinimum": 0},
+                                "intrinsicWidth": {"type": "number", "exclusiveMinimum": 0},
+                                "intrinsicHeight": {"type": "number", "exclusiveMinimum": 0},
+                                "crop": {
+                                    "type": "object",
+                                    "required": ["left", "top", "right", "bottom"],
+                                    "properties": {
+                                        "left": {"type": "number", "minimum": 0, "maximum": 95},
+                                        "top": {"type": "number", "minimum": 0, "maximum": 95},
+                                        "right": {"type": "number", "minimum": 0, "maximum": 95},
+                                        "bottom": {"type": "number", "minimum": 0, "maximum": 95},
+                                    },
+                                },
                             },
                         },
                     },
@@ -280,8 +367,9 @@ def capabilities() -> dict:
         "requires_mcp": False,
         "slide_refs": "1-based position or stable slide id",
         "layouts": list(VALID_LAYOUTS),
-        "image_fits": list(VALID_IMAGE_FITS),
-        "image_placements": list(VALID_IMAGE_PLACEMENTS),
+        "image_geometry": "slide-relative percentages: x, y, width, height",
+        "image_scaling": "proportional; width changes recompute height from intrinsic aspect ratio",
+        "image_crop": "non-destructive mask insets: left, top, right, bottom percentages",
         "image_storage": f"relative files under {ASSET_DIR}/",
         "operations": [
             "new", "validate", "info", "slides", "get", "title", "add", "set",
@@ -364,20 +452,28 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--to", type=int, required=True)
     add_json(sp)
 
-    sp = subs.add_parser("image-set", help="copy an image into deck assets and attach it to a slide")
+    sp = subs.add_parser("image-set", help="copy an image into deck assets and attach it as a free-positioned slide element")
     sp.add_argument("path", type=Path)
     sp.add_argument("slide")
     sp.add_argument("image", type=Path)
-    sp.add_argument("--placement", choices=VALID_IMAGE_PLACEMENTS, default="right")
-    sp.add_argument("--fit", choices=VALID_IMAGE_FITS, default="cover")
+    sp.add_argument("--x", type=float, default=55.0, help="left coordinate as percent of slide width")
+    sp.add_argument("--y", type=float, help="top coordinate as percent of slide height; default vertically centers the image")
+    sp.add_argument("--width", type=float, default=DEFAULT_IMAGE_WIDTH, help="full uncropped image width as percent of slide width")
     sp.add_argument("--alt", default="")
     add_json(sp)
 
-    sp = subs.add_parser("image-update", help="change placement, fit, or alt text for an attached image")
+    sp = subs.add_parser("image-update", help="move, proportionally resize, crop-mask, or change alt text for an attached image")
     sp.add_argument("path", type=Path)
     sp.add_argument("slide")
-    sp.add_argument("--placement", choices=VALID_IMAGE_PLACEMENTS)
-    sp.add_argument("--fit", choices=VALID_IMAGE_FITS)
+    sp.add_argument("--x", type=float)
+    sp.add_argument("--y", type=float)
+    sp.add_argument("--width", type=float, help="set full image width; height is recomputed proportionally")
+    sp.add_argument("--scale", type=float, help="multiply width and height by this positive factor")
+    sp.add_argument("--crop-left", type=float)
+    sp.add_argument("--crop-top", type=float)
+    sp.add_argument("--crop-right", type=float)
+    sp.add_argument("--crop-bottom", type=float)
+    sp.add_argument("--reset-crop", action="store_true")
     sp.add_argument("--alt")
     add_json(sp)
 
@@ -499,7 +595,15 @@ def main() -> int:
         elif cmd == "image-set":
             index, item = resolve_slide(deck, args.slide)
             rel = import_asset(path, args.image)
-            item["image"] = {"path": rel, "alt": args.alt, "fit": args.fit, "placement": args.placement}
+            iw, ih = image_dimensions(args.image)
+            width = _clamp(args.width, 1.0, 400.0)
+            height = image_height_for_width(width, iw, ih)
+            y = args.y if args.y is not None else (100.0 - height) / 2.0
+            item["image"] = normalize_image({
+                "path": rel, "alt": args.alt, "x": args.x, "y": y,
+                "width": width, "intrinsicWidth": iw, "intrinsicHeight": ih,
+                "crop": {"left": 0, "top": 0, "right": 0, "bottom": 0},
+            })
             deck["selectedId"] = item["id"]
             write_deck(path, deck)
             emit({"ok": True, "position": index + 1, "image": item["image"], "message": f"Attached image to slide {index + 1}"}, args.json)
@@ -509,15 +613,40 @@ def main() -> int:
             if not image:
                 raise ValueError(f"slide {index + 1} has no image")
             changed = False
-            for key, value in (("placement", args.placement), ("fit", args.fit), ("alt", args.alt)):
+            if args.scale is not None:
+                if args.scale <= 0:
+                    raise ValueError("--scale must be positive")
+                image["width"] = _clamp(image["width"] * args.scale, 1.0, 400.0)
+                image["height"] = image_height_for_width(image["width"], image["intrinsicWidth"], image["intrinsicHeight"])
+                changed = True
+            if args.width is not None:
+                image["width"] = _clamp(args.width, 1.0, 400.0)
+                image["height"] = image_height_for_width(image["width"], image["intrinsicWidth"], image["intrinsicHeight"])
+                changed = True
+            for key, value in (("x", args.x), ("y", args.y), ("alt", args.alt)):
                 if value is not None:
                     image[key] = value
                     changed = True
+            if args.reset_crop:
+                image["crop"] = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+                changed = True
+            crop_updates = {
+                "left": args.crop_left, "top": args.crop_top,
+                "right": args.crop_right, "bottom": args.crop_bottom,
+            }
+            if any(value is not None for value in crop_updates.values()):
+                crop = dict(image.get("crop", {}))
+                for key, value in crop_updates.items():
+                    if value is not None:
+                        crop[key] = value
+                image["crop"] = normalize_crop(crop)
+                changed = True
             if not changed:
-                raise ValueError("image-update requires at least one of --placement, --fit, --alt")
+                raise ValueError("image-update requires geometry, scale, crop, reset-crop, or alt options")
+            item["image"] = normalize_image(image)
             deck["selectedId"] = item["id"]
             write_deck(path, deck)
-            emit({"ok": True, "position": index + 1, "image": image, "message": f"Updated image on slide {index + 1}"}, args.json)
+            emit({"ok": True, "position": index + 1, "image": item["image"], "message": f"Updated image on slide {index + 1}"}, args.json)
         elif cmd == "image-remove":
             index, item = resolve_slide(deck, args.slide)
             removed = item.pop("image", None)
