@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Morrow Presenter</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Morrow Presenter</div>
+    <input id="deck-title" class="deck-title" value="Untitled deck" aria-label="Deck title" />
+    <div class="top-actions">
+      <button id="new-deck" class="ghost">新建</button>
+      <button id="import-deck" class="ghost">导入</button>
+      <button id="export-deck" class="ghost">导出</button>
+      <button id="present" class="primary">放映</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden />
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span>Slides</span>
+        <button id="add-slide" class="icon-button" title="新增 slide">＋</button>
+      </div>
+      <div id="slide-list" class="slide-list"></div>
+    </aside>
+
+    <section class="editor-area">
+      <div class="editor-toolbar">
+        <label>
+          布局
+          <select id="layout-select">
+            <option value="title-body">标题 + 正文</option>
+            <option value="title">仅标题</option>
+            <option value="section">章节页</option>
+          </select>
+        </label>
+        <div class="toolbar-spacer"></div>
+        <button id="duplicate-slide" class="ghost">复制</button>
+        <button id="delete-slide" class="danger-ghost">删除</button>
+      </div>
+
+      <div class="canvas-stage">
+        <div id="slide-canvas" class="slide-canvas" aria-label="Slide editor"></div>
+      </div>
+
+      <div class="statusbar">
+        <span id="save-status">已保存到本机</span>
+        <span id="slide-position"></span>
+        <span class="shortcut-hint">⌘⇧N 新增 · ⌘D 复制 · ⌘↵ 放映</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="presentation" class="presentation" hidden>
+    <div id="presentation-slide" class="presentation-slide"></div>
+    <button id="exit-presentation" class="presentation-close" aria-label="退出放映">×</button>
+    <div class="presentation-footer">
+      <span id="presentation-counter"></span>
+      <div class="presentation-progress"><div id="presentation-progress-bar"></div></div>
+      <span>← → / Space 翻页 · Esc 退出</span>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
