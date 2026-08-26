@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""Morrow Presenter shell interface.
+
+All persistent Presenter operations are available here so agents can operate decks
+without GUI automation or MCP.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+
+VERSION = 1
+VALID_LAYOUTS = ("title-body", "title", "section")
+APP_CANDIDATES = (
+    Path("/Applications/Morrow Presenter.app"),
+    Path.home() / "Applications" / "Morrow Presenter.app",
+    Path(__file__).resolve().parents[1] / "dist" / "Morrow Presenter.app",
+)
+
+
+def slide(title: str = "", body: str = "", layout: str = "title-body") -> dict:
+    return {"id": str(uuid.uuid4()), "layout": layout, "title": title, "body": body}
+
+
+def new_deck(title: str = "Untitled deck") -> dict:
+    first = slide("", "", "title")
+    return {"version": VERSION, "title": title, "selectedId": first["id"], "slides": [first]}
+
+
+def normalize(candidate: object) -> dict:
+    if not isinstance(candidate, dict):
+        raise ValueError("deck must be a JSON object")
+    raw_slides = candidate.get("slides")
+    if not isinstance(raw_slides, list) or not raw_slides:
+        raise ValueError("deck.slides must be a non-empty array")
+
+    seen: set[str] = set()
+    slides: list[dict] = []
+    for index, raw in enumerate(raw_slides, 1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"slide {index} must be an object")
+        sid = raw.get("id") if isinstance(raw.get("id"), str) and raw.get("id") else str(uuid.uuid4())
+        if sid in seen:
+            sid = str(uuid.uuid4())
+        seen.add(sid)
+        layout = raw.get("layout") if raw.get("layout") in VALID_LAYOUTS else "title-body"
+        slides.append({
+            "id": sid,
+            "layout": layout,
+            "title": raw.get("title") if isinstance(raw.get("title"), str) else "",
+            "body": raw.get("body") if isinstance(raw.get("body"), str) else "",
+        })
+
+    selected = candidate.get("selectedId")
+    if selected not in seen:
+        selected = slides[0]["id"]
+    title = candidate.get("title") if isinstance(candidate.get("title"), str) and candidate.get("title").strip() else "Untitled deck"
+    return {"version": VERSION, "title": title, "selectedId": selected, "slides": slides}
+
+
+def read_deck(path: Path) -> dict:
+    try:
+        return normalize(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        raise ValueError(f"deck not found: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc}") from None
+
+
+def write_deck(path: Path, deck: dict) -> None:
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(normalize(deck), ensure_ascii=False, indent=2) + "\n"
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(data)
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def resolve_slide(deck: dict, ref: str) -> tuple[int, dict]:
+    try:
+        position = int(ref)
+    except ValueError:
+        position = 0
+    if position:
+        if not 1 <= position <= len(deck["slides"]):
+            raise ValueError(f"slide position out of range: {position}")
+        return position - 1, deck["slides"][position - 1]
+    for index, item in enumerate(deck["slides"]):
+        if item["id"] == ref:
+            return index, item
+    raise ValueError(f"unknown slide reference: {ref}")
+
+
+def body_value(args: argparse.Namespace) -> str | None:
+    body = getattr(args, "body", None)
+    body_file = getattr(args, "body_file", None)
+    if body is not None and body_file is not None:
+        raise ValueError("use only one of --body and --body-file")
+    if body_file is None:
+        return body
+    if body_file == "-":
+        return sys.stdin.read()
+    return Path(body_file).expanduser().read_text(encoding="utf-8")
+
+
+def emit(value: object, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(value, ensure_ascii=False, indent=2))
+    elif isinstance(value, str):
+        print(value)
+    elif isinstance(value, dict) and "message" in value:
+        print(value["message"])
+    else:
+        print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def app_path() -> Path:
+    for candidate in APP_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    raise ValueError("Morrow Presenter.app not found; run scripts/build-app.sh")
+
+
+def launch(deck_path: Path, present: bool = False, slide_ref: str | None = None) -> None:
+    app = app_path()
+    args = ["open"]
+    if not present:
+        args.append("-g")
+    args.extend(["-na", str(app), "--args"])
+    if present:
+        args.append("--present")
+    if slide_ref:
+        args.extend(["--slide", slide_ref])
+    args.append(str(deck_path.expanduser().resolve()))
+    subprocess.run(args, check=True)
+
+
+def schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Morrow Presenter deck",
+        "type": "object",
+        "required": ["version", "title", "slides"],
+        "properties": {
+            "version": {"const": VERSION},
+            "title": {"type": "string"},
+            "selectedId": {"type": "string"},
+            "slides": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["id", "layout", "title", "body"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "layout": {"enum": list(VALID_LAYOUTS)},
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
+
+def capabilities() -> dict:
+    return {
+        "name": "Morrow Presenter",
+        "cli": "morrow-presenter",
+        "deck_format": "morrowdeck-json-v1",
+        "shell_first": True,
+        "requires_mcp": False,
+        "slide_refs": "1-based position or stable slide id",
+        "layouts": list(VALID_LAYOUTS),
+        "operations": [
+            "new", "validate", "info", "slides", "get", "title", "add", "set",
+            "duplicate", "delete", "move", "open", "present", "export", "schema",
+        ],
+        "agent_docs": str(Path(__file__).resolve().parents[1] / "docs" / "AGENT.md"),
+    }
+
+
+def add_json(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+
+def add_body_options(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--body")
+    sp.add_argument("--body-file", help="read body from a UTF-8 file, or - for stdin")
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="morrow-presenter", description="Shell-first slide deck editor and presenter")
+    p.add_argument("--version", action="version", version=f"Morrow Presenter CLI format-v{VERSION}")
+    subs = p.add_subparsers(dest="command", required=True)
+
+    sp = subs.add_parser("capabilities", help="describe the agent-operable command surface")
+    add_json(sp)
+    sp = subs.add_parser("schema", help="print the deck JSON schema")
+    add_json(sp)
+
+    sp = subs.add_parser("new", help="create a new .morrowdeck")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("--title", default="Untitled deck")
+    sp.add_argument("--force", action="store_true")
+    add_json(sp)
+
+    for name, help_text in (("validate", "validate and normalize-check a deck"), ("info", "show deck metadata"), ("slides", "list slides")):
+        sp = subs.add_parser(name, help=help_text)
+        sp.add_argument("path", type=Path)
+        add_json(sp)
+
+    sp = subs.add_parser("get", help="get one slide")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    add_json(sp)
+
+    sp = subs.add_parser("title", help="set deck title")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("title")
+    add_json(sp)
+
+    sp = subs.add_parser("add", help="add a slide")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("--after", help="insert after slide ref; default appends")
+    sp.add_argument("--layout", choices=VALID_LAYOUTS, default="title-body")
+    sp.add_argument("--title", default="")
+    add_body_options(sp)
+    add_json(sp)
+
+    sp = subs.add_parser("set", help="change fields on one slide")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    sp.add_argument("--layout", choices=VALID_LAYOUTS)
+    sp.add_argument("--title")
+    add_body_options(sp)
+    add_json(sp)
+
+    sp = subs.add_parser("duplicate", help="duplicate one slide after itself")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    add_json(sp)
+
+    sp = subs.add_parser("delete", help="delete one slide; a deck always retains at least one slide")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    add_json(sp)
+
+    sp = subs.add_parser("move", help="move a slide to a 1-based position")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    sp.add_argument("--to", type=int, required=True)
+    add_json(sp)
+
+    for name, help_text in (("open", "open deck in the Mac app"), ("present", "open deck directly in presentation mode")):
+        sp = subs.add_parser(name, help=help_text)
+        sp.add_argument("path", type=Path)
+        sp.add_argument("--slide", help="initial slide ref")
+        add_json(sp)
+
+    sp = subs.add_parser("export", help="write a normalized JSON copy")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("output", type=Path)
+    add_json(sp)
+    return p
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        cmd = args.command
+        if cmd == "capabilities":
+            emit(capabilities(), args.json)
+            return 0
+        if cmd == "schema":
+            emit(schema(), True)
+            return 0
+        if cmd == "new":
+            path = args.path.expanduser().resolve()
+            if path.exists() and not args.force:
+                raise ValueError(f"refusing to overwrite existing deck: {path}; use --force")
+            write_deck(path, new_deck(args.title))
+            emit({"ok": True, "path": str(path), "message": f"Created {path}"}, args.json)
+            return 0
+
+        deck = read_deck(args.path.expanduser())
+        path = args.path.expanduser().resolve()
+
+        if cmd == "validate":
+            emit({"ok": True, "path": str(path), "slides": len(deck["slides"]), "format_version": VERSION, "message": f"Valid deck: {len(deck['slides'])} slides"}, args.json)
+        elif cmd == "info":
+            emit({"path": str(path), "title": deck["title"], "slides": len(deck["slides"]), "selectedId": deck["selectedId"], "format_version": VERSION}, args.json)
+        elif cmd == "slides":
+            items = [{"position": i + 1, **item} for i, item in enumerate(deck["slides"])]
+            if args.json:
+                emit(items, True)
+            else:
+                for item in items:
+                    print(f"{item['position']:>3}  {item['id']}  {item['layout']:<10}  {item['title'] or '(untitled)'}")
+        elif cmd == "get":
+            index, item = resolve_slide(deck, args.slide)
+            emit({"position": index + 1, **item}, True if args.json else False)
+        elif cmd == "title":
+            deck["title"] = args.title
+            write_deck(path, deck)
+            emit({"ok": True, "title": args.title, "message": f"Deck title set to: {args.title}"}, args.json)
+        elif cmd == "add":
+            body = body_value(args) or ""
+            item = slide(args.title, body, args.layout)
+            if args.after:
+                index, _ = resolve_slide(deck, args.after)
+                insert_at = index + 1
+            else:
+                insert_at = len(deck["slides"])
+            deck["slides"].insert(insert_at, item)
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": insert_at + 1, **item, "message": f"Added slide {insert_at + 1}"}, args.json)
+        elif cmd == "set":
+            index, item = resolve_slide(deck, args.slide)
+            body = body_value(args)
+            changed = False
+            for key, value in (("layout", args.layout), ("title", args.title), ("body", body)):
+                if value is not None:
+                    item[key] = value
+                    changed = True
+            if not changed:
+                raise ValueError("set requires at least one of --layout, --title, --body, --body-file")
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": index + 1, **item, "message": f"Updated slide {index + 1}"}, args.json)
+        elif cmd == "duplicate":
+            index, source = resolve_slide(deck, args.slide)
+            copy = dict(source)
+            copy["id"] = str(uuid.uuid4())
+            deck["slides"].insert(index + 1, copy)
+            deck["selectedId"] = copy["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": index + 2, **copy, "message": f"Duplicated slide {index + 1} to {index + 2}"}, args.json)
+        elif cmd == "delete":
+            index, item = resolve_slide(deck, args.slide)
+            if len(deck["slides"]) == 1:
+                deck["slides"][0] = {"id": item["id"], "layout": "title-body", "title": "", "body": ""}
+                deck["selectedId"] = item["id"]
+                message = "Cleared the only slide"
+            else:
+                deck["slides"].pop(index)
+                selected = deck["slides"][min(index, len(deck["slides"]) - 1)]
+                deck["selectedId"] = selected["id"]
+                message = f"Deleted slide {index + 1}"
+            write_deck(path, deck)
+            emit({"ok": True, "message": message}, args.json)
+        elif cmd == "move":
+            index, item = resolve_slide(deck, args.slide)
+            if not 1 <= args.to <= len(deck["slides"]):
+                raise ValueError(f"--to must be between 1 and {len(deck['slides'])}")
+            deck["slides"].pop(index)
+            deck["slides"].insert(args.to - 1, item)
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "id": item["id"], "position": args.to, "message": f"Moved slide to {args.to}"}, args.json)
+        elif cmd == "open":
+            if args.slide:
+                resolve_slide(deck, args.slide)
+            launch(path, present=False, slide_ref=args.slide)
+            emit({"ok": True, "path": str(path), "message": f"Opened {path}"}, args.json)
+        elif cmd == "present":
+            if args.slide:
+                resolve_slide(deck, args.slide)
+            launch(path, present=True, slide_ref=args.slide)
+            emit({"ok": True, "path": str(path), "message": f"Presenting {path}"}, args.json)
+        elif cmd == "export":
+            output = args.output.expanduser().resolve()
+            write_deck(output, deck)
+            emit({"ok": True, "path": str(output), "message": f"Exported {output}"}, args.json)
+        else:
+            raise ValueError(f"unsupported command: {cmd}")
+        return 0
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"morrow-presenter: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -12,10 +12,11 @@
     <input id="deck-title" class="deck-title" value="Untitled deck" aria-label="Deck title" />
     <div class="top-actions">
       <button id="new-deck" class="ghost">新建</button>
-      <button id="import-deck" class="ghost">导入</button>
-      <button id="export-deck" class="ghost">导出</button>
+      <button id="open-deck" class="ghost">打开</button>
+      <button id="save-deck" class="ghost">保存</button>
+      <button id="save-as" class="ghost">另存为</button>
       <button id="present" class="primary">放映</button>
-      <input id="import-file" type="file" accept="application/json,.json" hidden />
+      <input id="import-file" type="file" accept="application/json,.json,.morrowdeck" hidden />
     </div>
   </header>
 
@@ -48,7 +49,7 @@
       </div>
 
       <div class="statusbar">
-        <span id="save-status">已保存到本机</span>
+        <span id="save-status">未保存 · ⌘S 保存</span>
         <span id="slide-position"></span>
         <span class="shortcut-hint">⌘⇧N 新增 · ⌘D 复制 · ⌘↵ 放映</span>
       </div>

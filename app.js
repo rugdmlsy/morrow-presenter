@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'morrow-presenter.deck.v1';
 const VALID_LAYOUTS = new Set(['title-body', 'title', 'section']);
+const isNative = Boolean(window.webkit?.messageHandlers?.presenter);
 
 const el = {
   deckTitle: document.querySelector('#deck-title'),
@@ -10,9 +11,10 @@ const el = {
   duplicateSlide: document.querySelector('#duplicate-slide'),
   deleteSlide: document.querySelector('#delete-slide'),
   newDeck: document.querySelector('#new-deck'),
-  importDeck: document.querySelector('#import-deck'),
+  openDeck: document.querySelector('#open-deck'),
+  saveDeck: document.querySelector('#save-deck'),
+  saveAs: document.querySelector('#save-as'),
   importFile: document.querySelector('#import-file'),
-  exportDeck: document.querySelector('#export-deck'),
   present: document.querySelector('#present'),
   saveStatus: document.querySelector('#save-status'),
   slidePosition: document.querySelector('#slide-position'),
@@ -29,29 +31,12 @@ function uid() {
 
 function starterDeck() {
   const first = uid();
-  const second = uid();
-  const third = uid();
   return {
     version: 1,
     title: 'Untitled deck',
     selectedId: first,
-    slides: [
-      { id: first, layout: 'title', title: 'Morrow Presenter', body: '' },
-      { id: second, layout: 'title-body', title: 'A minimal slide editor', body: '在画布里直接编辑标题和正文。\n左侧可以选择、拖动排序 slides。' },
-      { id: third, layout: 'section', title: 'Ready to present', body: '点击右上角“放映”，或按 ⌘↵。' },
-    ],
+    slides: [{ id: first, layout: 'title', title: '', body: '' }],
   };
-}
-
-function loadDeck() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return starterDeck();
-    return normalizeDeck(JSON.parse(raw));
-  } catch (error) {
-    console.warn('Failed to load saved deck:', error);
-    return starterDeck();
-  }
 }
 
 function normalizeDeck(candidate) {
@@ -81,9 +66,21 @@ function normalizeDeck(candidate) {
   };
 }
 
-let state = loadDeck();
+function loadBrowserDeck() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? normalizeDeck(JSON.parse(raw)) : starterDeck();
+  } catch (error) {
+    console.warn('Failed to load saved deck:', error);
+    return starterDeck();
+  }
+}
+
+let state = isNative ? starterDeck() : loadBrowserDeck();
+let currentPath = null;
 let presentationIndex = 0;
 let savePulse;
+let autosaveTimer;
 
 function selectedIndex() {
   return Math.max(0, state.slides.findIndex((slide) => slide.id === state.selectedId));
@@ -93,12 +90,40 @@ function selectedSlide() {
   return state.slides[selectedIndex()];
 }
 
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  el.saveStatus.textContent = '已保存到本机';
+function pathBasename(path) {
+  return path?.split('/').filter(Boolean).pop() || 'Untitled.morrowdeck';
+}
+
+function nativePost(action, payload = {}) {
+  if (!isNative) return;
+  window.webkit.messageHandlers.presenter.postMessage({ action, ...payload });
+}
+
+function setSaveStatus(text, pulse = false) {
+  el.saveStatus.textContent = text;
   clearTimeout(savePulse);
   el.saveStatus.style.opacity = '1';
-  savePulse = setTimeout(() => { el.saveStatus.style.opacity = '.72'; }, 700);
+  if (pulse) savePulse = setTimeout(() => { el.saveStatus.style.opacity = '.72'; }, 700);
+}
+
+function scheduleAutosave() {
+  if (!isNative || !currentPath) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => nativePost('autosave', { deck: state }), 180);
+}
+
+function persist() {
+  if (isNative) {
+    if (currentPath) {
+      setSaveStatus(`${pathBasename(currentPath)} · 正在保存…`);
+      scheduleAutosave();
+    } else {
+      setSaveStatus('未保存 · ⌘S 保存');
+    }
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  setSaveStatus('已保存到浏览器', true);
 }
 
 function updateSelected(patch) {
@@ -217,6 +242,16 @@ function selectSlide(id) {
   renderStatus();
 }
 
+function selectSlideRef(ref) {
+  if (ref == null || ref === '') return;
+  const position = Number(ref);
+  if (Number.isInteger(position) && position >= 1 && position <= state.slides.length) {
+    state.selectedId = state.slides[position - 1].id;
+    return;
+  }
+  if (state.slides.some((slide) => slide.id === ref)) state.selectedId = ref;
+}
+
 function addSlide() {
   const index = selectedIndex();
   const slide = { id: uid(), layout: 'title-body', title: '', body: '' };
@@ -263,37 +298,45 @@ function moveSlide(sourceId, targetId) {
 }
 
 function newDeck() {
-  if (!confirm('新建演示文稿会替换当前本地内容。继续吗？')) return;
+  if (!confirm('新建演示文稿会关闭当前文稿。继续吗？')) return;
   state = starterDeck();
+  currentPath = null;
+  if (isNative) nativePost('new');
+  else localStorage.removeItem(STORAGE_KEY);
   persist();
   render();
 }
 
-function exportDeck() {
-  const payload = {
-    version: 1,
-    title: state.title,
-    slides: state.slides,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+function openDeck() {
+  if (isNative) nativePost('open');
+  else el.importFile.click();
+}
+
+function downloadDeck() {
+  const blob = new Blob([`${JSON.stringify(state, null, 2)}\n`], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   const filename = (state.title || 'deck').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'deck';
   anchor.href = url;
-  anchor.download = `${filename}.morrow.json`;
+  anchor.download = `${filename}.morrowdeck`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function saveDeck(forceSaveAs = false) {
+  clearTimeout(autosaveTimer);
+  if (isNative) nativePost(forceSaveAs ? 'saveAs' : 'save', { deck: state });
+  else downloadDeck();
 }
 
 async function importDeck(file) {
   if (!file) return;
   try {
-    const candidate = JSON.parse(await file.text());
-    state = normalizeDeck(candidate);
+    state = normalizeDeck(JSON.parse(await file.text()));
     persist();
     render();
   } catch (error) {
-    alert(`无法导入：${error.message}`);
+    alert(`无法打开：${error.message}`);
   } finally {
     el.importFile.value = '';
   }
@@ -323,17 +366,20 @@ async function startPresentation() {
   buildPresentationSlide(state.slides[presentationIndex]);
   el.presentation.hidden = false;
   document.body.style.overflow = 'hidden';
-  try {
-    await el.presentation.requestFullscreen?.();
-  } catch (error) {
-    console.info('Fullscreen was not entered:', error);
+  if (isNative) {
+    nativePost('presentStart');
+  } else {
+    try { await el.presentation.requestFullscreen?.(); } catch (error) { console.info('Fullscreen was not entered:', error); }
   }
 }
 
 async function exitPresentation() {
+  if (el.presentation.hidden) return;
   el.presentation.hidden = true;
   document.body.style.overflow = 'hidden';
-  if (document.fullscreenElement) {
+  if (isNative) {
+    nativePost('presentEnd');
+  } else if (document.fullscreenElement) {
     try { await document.exitFullscreen(); } catch (_) {}
   }
 }
@@ -342,6 +388,56 @@ function nextSlide(delta) {
   presentationIndex = Math.max(0, Math.min(state.slides.length - 1, presentationIndex + delta));
   buildPresentationSlide(state.slides[presentationIndex]);
 }
+
+window.presenterNativeContext = ({ path }) => {
+  currentPath = path || null;
+  setSaveStatus(currentPath ? `${pathBasename(currentPath)} · 已保存` : '未保存 · ⌘S 保存', true);
+};
+
+window.presenterNativeSaved = ({ path }) => {
+  currentPath = path;
+  setSaveStatus(`${pathBasename(currentPath)} · 已保存`, true);
+};
+
+window.presenterNativeLoad = ({ json, path, present, slide }) => {
+  try {
+    state = normalizeDeck(JSON.parse(json));
+    currentPath = path;
+    selectSlideRef(slide);
+    render();
+    setSaveStatus(`${pathBasename(path)} · 已保存`, true);
+    if (present) setTimeout(startPresentation, 80);
+  } catch (error) {
+    alert(`无法打开文稿：${error.message}`);
+  }
+};
+
+window.presenterNativeExternalLoad = ({ json, path }) => {
+  try {
+    const previousSelected = state.selectedId;
+    state = normalizeDeck(JSON.parse(json));
+    if (state.slides.some((slide) => slide.id === previousSelected)) state.selectedId = previousSelected;
+    currentPath = path;
+    render();
+    setSaveStatus(`${pathBasename(path)} · 已同步 shell 修改`, true);
+  } catch (error) {
+    console.warn('External deck update ignored:', error);
+  }
+};
+
+window.presenterNativeFullscreenEnded = () => {
+  if (!el.presentation.hidden) {
+    el.presentation.hidden = true;
+    document.body.style.overflow = 'hidden';
+  }
+};
+
+window.presenterMenuAction = (action) => {
+  if (action === 'new') newDeck();
+  else if (action === 'save') saveDeck(false);
+  else if (action === 'saveAs') saveDeck(true);
+  else if (action === 'present') startPresentation();
+};
 
 el.deckTitle.addEventListener('input', () => {
   state.title = el.deckTitle.value;
@@ -355,15 +451,18 @@ el.addSlide.addEventListener('click', addSlide);
 el.duplicateSlide.addEventListener('click', duplicateSlide);
 el.deleteSlide.addEventListener('click', deleteSlide);
 el.newDeck.addEventListener('click', newDeck);
-el.exportDeck.addEventListener('click', exportDeck);
-el.importDeck.addEventListener('click', () => el.importFile.click());
+el.openDeck.addEventListener('click', openDeck);
+el.saveDeck.addEventListener('click', () => saveDeck(false));
+el.saveAs.addEventListener('click', () => saveDeck(true));
 el.importFile.addEventListener('change', () => importDeck(el.importFile.files?.[0]));
 el.present.addEventListener('click', startPresentation);
 el.exitPresentation.addEventListener('click', exitPresentation);
 
-document.addEventListener('fullscreenchange', () => {
-  if (!document.fullscreenElement && !el.presentation.hidden) exitPresentation();
-});
+if (!isNative) {
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && !el.presentation.hidden) exitPresentation();
+  });
+}
 
 document.addEventListener('keydown', (event) => {
   if (!el.presentation.hidden) {
@@ -400,3 +499,4 @@ document.addEventListener('keydown', (event) => {
 });
 
 render();
+if (isNative) nativePost('ready');
