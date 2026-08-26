@@ -7,6 +7,7 @@ without GUI automation or MCP.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,10 @@ import uuid
 
 VERSION = 1
 VALID_LAYOUTS = ("title-body", "title", "section")
+VALID_IMAGE_FITS = ("cover", "contain")
+VALID_IMAGE_PLACEMENTS = ("right", "left", "background", "full")
+SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
+ASSET_DIR = ".morrow-assets"
 APP_CANDIDATES = (
     Path("/Applications/Morrow Presenter.app"),
     Path.home() / "Applications" / "Morrow Presenter.app",
@@ -25,8 +30,31 @@ APP_CANDIDATES = (
 )
 
 
-def slide(title: str = "", body: str = "", layout: str = "title-body") -> dict:
-    return {"id": str(uuid.uuid4()), "layout": layout, "title": title, "body": body}
+def normalize_image(raw: object) -> dict | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("slide.image must be an object")
+    path = raw.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("slide.image.path must be a non-empty relative path")
+    path = path.replace("\\", "/")
+    candidate = Path(path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError("slide.image.path must stay inside the deck directory")
+    return {
+        "path": path,
+        "alt": raw.get("alt") if isinstance(raw.get("alt"), str) else "",
+        "fit": raw.get("fit") if raw.get("fit") in VALID_IMAGE_FITS else "cover",
+        "placement": raw.get("placement") if raw.get("placement") in VALID_IMAGE_PLACEMENTS else "right",
+    }
+
+
+def slide(title: str = "", body: str = "", layout: str = "title-body", image: dict | None = None) -> dict:
+    item = {"id": str(uuid.uuid4()), "layout": layout, "title": title, "body": body}
+    if image is not None:
+        item["image"] = normalize_image(image)
+    return item
 
 
 def new_deck(title: str = "Untitled deck") -> dict:
@@ -51,12 +79,16 @@ def normalize(candidate: object) -> dict:
             sid = str(uuid.uuid4())
         seen.add(sid)
         layout = raw.get("layout") if raw.get("layout") in VALID_LAYOUTS else "title-body"
-        slides.append({
+        item = {
             "id": sid,
             "layout": layout,
             "title": raw.get("title") if isinstance(raw.get("title"), str) else "",
             "body": raw.get("body") if isinstance(raw.get("body"), str) else "",
-        })
+        }
+        image = normalize_image(raw.get("image"))
+        if image is not None:
+            item["image"] = image
+        slides.append(item)
 
     selected = candidate.get("selectedId")
     if selected not in seen:
@@ -86,6 +118,60 @@ def write_deck(path: Path, deck: dict) -> None:
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+
+
+def asset_file(deck_path: Path, image_path: str) -> Path:
+    base = deck_path.expanduser().resolve().parent
+    target = (base / image_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise ValueError(f"asset escapes deck directory: {image_path}") from None
+    return target
+
+
+def import_asset(deck_path: Path, source: Path) -> str:
+    source = source.expanduser().resolve()
+    if not source.is_file():
+        raise ValueError(f"image not found: {source}")
+    ext = source.suffix.lower()
+    if ext not in SUPPORTED_IMAGE_EXTS:
+        raise ValueError(f"unsupported image type: {ext or '(none)'}")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:24]
+    rel = Path(ASSET_DIR) / f"{digest}{ext}"
+    target = deck_path.expanduser().resolve().parent / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        shutil.copyfile(source, target)
+    return rel.as_posix()
+
+
+def copy_assets(deck: dict, source_deck: Path, target_deck: Path) -> None:
+    source_base = source_deck.expanduser().resolve().parent
+    target_base = target_deck.expanduser().resolve().parent
+    if source_base == target_base:
+        return
+    for item in deck["slides"]:
+        image = item.get("image")
+        if not image:
+            continue
+        rel = image["path"]
+        source = asset_file(source_deck, rel)
+        if not source.is_file():
+            raise ValueError(f"missing image asset: {rel}")
+        target = asset_file(target_deck, rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != target.resolve():
+            shutil.copyfile(source, target)
+
+
+def missing_assets(deck: dict, deck_path: Path) -> list[str]:
+    missing = []
+    for item in deck["slides"]:
+        image = item.get("image")
+        if image and not asset_file(deck_path, image["path"]).is_file():
+            missing.append(image["path"])
+    return sorted(set(missing))
 
 
 def resolve_slide(deck: dict, ref: str) -> tuple[int, dict]:
@@ -168,6 +254,16 @@ def schema() -> dict:
                         "layout": {"enum": list(VALID_LAYOUTS)},
                         "title": {"type": "string"},
                         "body": {"type": "string"},
+                        "image": {
+                            "type": "object",
+                            "required": ["path", "alt", "fit", "placement"],
+                            "properties": {
+                                "path": {"type": "string", "minLength": 1},
+                                "alt": {"type": "string"},
+                                "fit": {"enum": list(VALID_IMAGE_FITS)},
+                                "placement": {"enum": list(VALID_IMAGE_PLACEMENTS)},
+                            },
+                        },
                     },
                 },
             },
@@ -184,9 +280,13 @@ def capabilities() -> dict:
         "requires_mcp": False,
         "slide_refs": "1-based position or stable slide id",
         "layouts": list(VALID_LAYOUTS),
+        "image_fits": list(VALID_IMAGE_FITS),
+        "image_placements": list(VALID_IMAGE_PLACEMENTS),
+        "image_storage": f"relative files under {ASSET_DIR}/",
         "operations": [
             "new", "validate", "info", "slides", "get", "title", "add", "set",
-            "duplicate", "delete", "move", "open", "present", "export", "schema",
+            "duplicate", "delete", "move", "image-set", "image-update", "image-remove",
+            "open", "present", "export", "schema",
         ],
         "agent_docs": str(Path(__file__).resolve().parents[1] / "docs" / "AGENT.md"),
     }
@@ -264,6 +364,28 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--to", type=int, required=True)
     add_json(sp)
 
+    sp = subs.add_parser("image-set", help="copy an image into deck assets and attach it to a slide")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    sp.add_argument("image", type=Path)
+    sp.add_argument("--placement", choices=VALID_IMAGE_PLACEMENTS, default="right")
+    sp.add_argument("--fit", choices=VALID_IMAGE_FITS, default="cover")
+    sp.add_argument("--alt", default="")
+    add_json(sp)
+
+    sp = subs.add_parser("image-update", help="change placement, fit, or alt text for an attached image")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    sp.add_argument("--placement", choices=VALID_IMAGE_PLACEMENTS)
+    sp.add_argument("--fit", choices=VALID_IMAGE_FITS)
+    sp.add_argument("--alt")
+    add_json(sp)
+
+    sp = subs.add_parser("image-remove", help="detach an image from a slide; the shared asset file is retained")
+    sp.add_argument("path", type=Path)
+    sp.add_argument("slide")
+    add_json(sp)
+
     for name, help_text in (("open", "open deck in the Mac app"), ("present", "open deck directly in presentation mode")):
         sp = subs.add_parser(name, help=help_text)
         sp.add_argument("path", type=Path)
@@ -299,9 +421,12 @@ def main() -> int:
         path = args.path.expanduser().resolve()
 
         if cmd == "validate":
-            emit({"ok": True, "path": str(path), "slides": len(deck["slides"]), "format_version": VERSION, "message": f"Valid deck: {len(deck['slides'])} slides"}, args.json)
+            missing = missing_assets(deck, path)
+            if missing:
+                raise ValueError("missing image assets: " + ", ".join(missing))
+            emit({"ok": True, "path": str(path), "slides": len(deck["slides"]), "images": sum(1 for s in deck["slides"] if s.get("image")), "format_version": VERSION, "message": f"Valid deck: {len(deck['slides'])} slides"}, args.json)
         elif cmd == "info":
-            emit({"path": str(path), "title": deck["title"], "slides": len(deck["slides"]), "selectedId": deck["selectedId"], "format_version": VERSION}, args.json)
+            emit({"path": str(path), "title": deck["title"], "slides": len(deck["slides"]), "images": sum(1 for s in deck["slides"] if s.get("image")), "selectedId": deck["selectedId"], "format_version": VERSION}, args.json)
         elif cmd == "slides":
             items = [{"position": i + 1, **item} for i, item in enumerate(deck["slides"])]
             if args.json:
@@ -371,6 +496,34 @@ def main() -> int:
             deck["selectedId"] = item["id"]
             write_deck(path, deck)
             emit({"ok": True, "id": item["id"], "position": args.to, "message": f"Moved slide to {args.to}"}, args.json)
+        elif cmd == "image-set":
+            index, item = resolve_slide(deck, args.slide)
+            rel = import_asset(path, args.image)
+            item["image"] = {"path": rel, "alt": args.alt, "fit": args.fit, "placement": args.placement}
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": index + 1, "image": item["image"], "message": f"Attached image to slide {index + 1}"}, args.json)
+        elif cmd == "image-update":
+            index, item = resolve_slide(deck, args.slide)
+            image = item.get("image")
+            if not image:
+                raise ValueError(f"slide {index + 1} has no image")
+            changed = False
+            for key, value in (("placement", args.placement), ("fit", args.fit), ("alt", args.alt)):
+                if value is not None:
+                    image[key] = value
+                    changed = True
+            if not changed:
+                raise ValueError("image-update requires at least one of --placement, --fit, --alt")
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": index + 1, "image": image, "message": f"Updated image on slide {index + 1}"}, args.json)
+        elif cmd == "image-remove":
+            index, item = resolve_slide(deck, args.slide)
+            removed = item.pop("image", None)
+            deck["selectedId"] = item["id"]
+            write_deck(path, deck)
+            emit({"ok": True, "position": index + 1, "removed": removed, "message": f"Removed image from slide {index + 1}"}, args.json)
         elif cmd == "open":
             if args.slide:
                 resolve_slide(deck, args.slide)
@@ -383,6 +536,7 @@ def main() -> int:
             emit({"ok": True, "path": str(path), "message": f"Presenting {path}"}, args.json)
         elif cmd == "export":
             output = args.output.expanduser().resolve()
+            copy_assets(deck, path, output)
             write_deck(output, deck)
             emit({"ok": True, "path": str(output), "message": f"Exported {output}"}, args.json)
         else:

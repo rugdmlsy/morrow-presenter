@@ -26,6 +26,8 @@ morrow-presenter capabilities --json
 ## GUI 功能
 
 - 标题、标题 + 正文、章节页三种布局
+- 本地图片：左/右分栏、背景图、全屏图，支持 `cover` / `contain`
+- 图片自动复制到 deck 同目录的 `.morrow-assets/`，使用内容 hash 去重
 - 缩略图选择和拖拽排序
 - 新增、复制、删除 slide
 - 真实 `.morrowdeck` 打开 / 保存 / 另存为
@@ -48,6 +50,16 @@ morrow-presenter present demo.morrowdeck
 完整说明见 `docs/AGENT.md`，文件格式见 `docs/FORMAT.md`。
 
 核心设计约束：以后增加任何会改变文稿或产生持久效果的 GUI 功能，都必须同时提供 shell 等价接口和机器可读输出；MCP 可以作为适配层，但不能成为 agent 操作 Presenter 的前置条件。
+
+### 图片
+
+```bash
+morrow-presenter image-set demo.morrowdeck 2 ./diagram.png --placement right --fit contain --alt "Architecture"
+morrow-presenter image-update demo.morrowdeck 2 --placement background --fit cover
+morrow-presenter image-remove demo.morrowdeck 2
+```
+
+Presenter 只使用已有本地图片文件，不负责生成图片。
 
 ## 构建
 

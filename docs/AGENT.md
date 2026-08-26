@@ -63,6 +63,29 @@ cat notes.txt | morrow-presenter set talk.morrowdeck 2 --body-file -
 morrow-presenter add talk.morrowdeck --body-file section.txt
 ```
 
+## Images
+
+Attach an existing local image. The CLI copies it into the deck's `.morrow-assets/` directory using a content hash; do not point the deck at arbitrary absolute filesystem paths.
+
+```bash
+morrow-presenter image-set deck.morrowdeck 2 ./diagram.png \
+  --placement right --fit contain --alt "System architecture" --json
+```
+
+Update display metadata without needing the original source image again:
+
+```bash
+morrow-presenter image-update deck.morrowdeck 2 --placement background --fit cover --alt "Datacenter overview" --json
+```
+
+Remove the image attachment without deleting the shared content-addressed asset:
+
+```bash
+morrow-presenter image-remove deck.morrowdeck 2 --json
+```
+
+Placements are `right`, `left`, `background`, and `full`. Fits are `cover` and `contain`. `get`, `slides`, `schema`, and `capabilities` expose image metadata for agents. `export` copies referenced assets when exporting to another directory.
+
 ## Machine-readable output
 
 Mutation and inspection commands accept `--json`. Prefer it for agent workflows.

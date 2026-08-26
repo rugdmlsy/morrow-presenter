@@ -1,4 +1,5 @@
 import Cocoa
+import CryptoKit
 import WebKit
 import UniformTypeIdentifiers
 
@@ -177,6 +178,16 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         case "autosave":
             guard currentURL != nil, let deck = payload["deck"] else { return }
             save(deck: deck, forcePanel: false, notify: true)
+        case "chooseImage":
+            guard let deck = payload["deck"] else { return }
+            chooseImage(deck: deck)
+        case "loadAsset":
+            guard let path = payload["path"] as? String, let requestId = payload["requestId"] as? String else { return }
+            loadAsset(path: path, requestId: requestId)
+        case "assetRendered":
+            if let path = payload["path"] as? String { diagnostic("rendered \(path)") }
+        case "runtimeError":
+            if let message = payload["message"] as? String { diagnostic("js-error \(message)") }
         case "presentStart":
             enterFullscreenIfNeeded()
         case "presentEnd":
@@ -208,8 +219,10 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
             target = url
         }
         guard let target else { return }
+        let previousURL = currentURL
         do {
             guard JSONSerialization.isValidJSONObject(deck) else { throw NSError(domain: "MorrowPresenter", code: 1, userInfo: [NSLocalizedDescriptionKey: "Deck is not valid JSON"] ) }
+            if previousURL != target { try copyReferencedAssets(deck: deck, from: previousURL, to: target) }
             let data = try JSONSerialization.data(withJSONObject: deck, options: [.prettyPrinted, .sortedKeys])
             var bytes = data
             bytes.append(0x0A)
@@ -220,6 +233,123 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
             if notify { sendSaved(path: target.path) }
         } catch {
             showError("Could not save deck", error: error)
+        }
+    }
+
+    private func chooseImage(deck: Any) {
+        if currentURL == nil {
+            save(deck: deck, forcePanel: true, notify: true)
+        }
+        guard let deckURL = currentURL else { return }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose Image"
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+
+        do {
+            let relative = try importAsset(source: source, for: deckURL)
+            send(function: "window.presenterNativeImageChosen", payload: [
+                "path": relative,
+                "name": source.deletingPathExtension().lastPathComponent,
+            ])
+        } catch {
+            showError("Could not add image", error: error)
+        }
+    }
+
+    private func importAsset(source: URL, for deckURL: URL) throws -> String {
+        let supported = Set(["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"])
+        let ext = source.pathExtension.lowercased()
+        guard supported.contains(ext) else {
+            throw NSError(domain: "MorrowPresenter", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unsupported image type: .\(ext)"])
+        }
+        let data = try Data(contentsOf: source)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let relative = ".morrow-assets/\(String(digest.prefix(24))).\(ext)"
+        let target = deckURL.deletingLastPathComponent().appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: target.path) {
+            try data.write(to: target, options: .atomic)
+        }
+        return relative
+    }
+
+    private func loadAsset(path: String, requestId: String) {
+        guard let deckURL = currentURL else {
+            sendAssetError(requestId: requestId, path: path, message: "Deck must be saved before loading assets")
+            return
+        }
+        do {
+            let url = try resolvedAssetURL(relativePath: path, deckURL: deckURL)
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize, size > 32 * 1024 * 1024 {
+                throw NSError(domain: "MorrowPresenter", code: 3, userInfo: [NSLocalizedDescriptionKey: "Image exceeds 32 MB preview limit"])
+            }
+            let data = try Data(contentsOf: url)
+            diagnostic("asset \(path)")
+            let dataURL = "data:\(mimeType(for: url));base64,\(data.base64EncodedString())"
+            send(function: "window.presenterNativeAsset", payload: [
+                "requestId": requestId,
+                "path": path,
+                "dataURL": dataURL,
+            ])
+        } catch {
+            sendAssetError(requestId: requestId, path: path, message: error.localizedDescription)
+        }
+    }
+
+    private func sendAssetError(requestId: String, path: String, message: String) {
+        send(function: "window.presenterNativeAsset", payload: [
+            "requestId": requestId,
+            "path": path,
+            "error": message,
+        ])
+    }
+
+    private func resolvedAssetURL(relativePath: String, deckURL: URL) throws -> URL {
+        let parts = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard !relativePath.hasPrefix("/"), !parts.contains("..") else {
+            throw NSError(domain: "MorrowPresenter", code: 4, userInfo: [NSLocalizedDescriptionKey: "Asset path must be a safe relative path"])
+        }
+        let base = deckURL.deletingLastPathComponent().standardizedFileURL
+        let resolved = base.appendingPathComponent(relativePath).standardizedFileURL
+        let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"
+        guard resolved.path.hasPrefix(prefix) else {
+            throw NSError(domain: "MorrowPresenter", code: 5, userInfo: [NSLocalizedDescriptionKey: "Asset path escapes deck directory"])
+        }
+        return resolved
+    }
+
+    private func mimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "heic": return "image/heic"
+        case "heif": return "image/heif"
+        default: return "application/octet-stream"
+        }
+    }
+
+    private func copyReferencedAssets(deck: Any, from sourceDeck: URL?, to targetDeck: URL) throws {
+        guard let sourceDeck else { return }
+        let sourceBase = sourceDeck.deletingLastPathComponent().standardizedFileURL
+        let targetBase = targetDeck.deletingLastPathComponent().standardizedFileURL
+        if sourceBase == targetBase { return }
+        guard let object = deck as? [String: Any], let slides = object["slides"] as? [[String: Any]] else { return }
+        for slide in slides {
+            guard let image = slide["image"] as? [String: Any], let path = image["path"] as? String else { continue }
+            let source = try resolvedAssetURL(relativePath: path, deckURL: sourceDeck)
+            guard FileManager.default.fileExists(atPath: source.path) else { continue }
+            let target = try resolvedAssetURL(relativePath: path, deckURL: targetDeck)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.copyItem(at: source, to: target)
+            }
         }
     }
 

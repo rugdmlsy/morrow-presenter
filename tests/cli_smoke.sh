@@ -15,6 +15,11 @@ COPY="$TMP_DIR/copy.json"
 "$CLI" move "$DECK" 3 --to 2 >/dev/null
 "$CLI" delete "$DECK" 3 >/dev/null
 "$CLI" title "$DECK" "Smoke Renamed" >/dev/null
+SYSTEM_IMAGE="/System/Library/Image Capture/Automatic Tasks/MakePDF.app/Contents/Resources/horiz.jpg"
+if [[ -f "$SYSTEM_IMAGE" ]]; then
+  "$CLI" image-set "$DECK" 2 "$SYSTEM_IMAGE" --placement right --fit contain --alt "System test image" >/dev/null
+  "$CLI" image-update "$DECK" 2 --placement left --fit cover --alt "Updated system image" >/dev/null
+fi
 "$CLI" validate "$DECK" --json >/dev/null
 "$CLI" export "$DECK" "$COPY" >/dev/null
 
@@ -32,5 +37,13 @@ assert deck["slides"][0]["title"] == "Opening"
 assert deck["slides"][0]["layout"] == "title"
 assert deck["slides"][1]["title"] == "Problem"
 assert deck["slides"][1]["body"] == "One\nTwo"
+if "image" in deck["slides"][1]:
+    image = deck["slides"][1]["image"]
+    assert image["placement"] == "left"
+    assert image["fit"] == "cover"
+    assert image["alt"] == "Updated system image"
+    assert image["path"].startswith(".morrow-assets/")
+    assert (Path(sys.argv[1]).parent / image["path"]).is_file()
+    assert (Path(sys.argv[2]).parent / image["path"]).is_file()
 print("CLI_SMOKE_OK")
 PY

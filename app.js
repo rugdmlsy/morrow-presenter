@@ -1,5 +1,7 @@
 const STORAGE_KEY = 'morrow-presenter.deck.v1';
 const VALID_LAYOUTS = new Set(['title-body', 'title', 'section']);
+const VALID_IMAGE_FITS = new Set(['cover', 'contain']);
+const VALID_IMAGE_PLACEMENTS = new Set(['right', 'left', 'background', 'full']);
 const isNative = Boolean(window.webkit?.messageHandlers?.presenter);
 
 const el = {
@@ -7,6 +9,12 @@ const el = {
   slideList: document.querySelector('#slide-list'),
   slideCanvas: document.querySelector('#slide-canvas'),
   layoutSelect: document.querySelector('#layout-select'),
+  chooseImage: document.querySelector('#choose-image'),
+  imageControls: document.querySelector('#image-controls'),
+  imagePlacement: document.querySelector('#image-placement'),
+  imageFit: document.querySelector('#image-fit'),
+  imageAlt: document.querySelector('#image-alt'),
+  removeImage: document.querySelector('#remove-image'),
   addSlide: document.querySelector('#add-slide'),
   duplicateSlide: document.querySelector('#duplicate-slide'),
   deleteSlide: document.querySelector('#delete-slide'),
@@ -29,6 +37,22 @@ function uid() {
   return crypto.randomUUID?.() ?? `slide-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function normalizeImage(candidate) {
+  if (candidate == null) return null;
+  if (typeof candidate !== 'object' || typeof candidate.path !== 'string' || !candidate.path.trim()) {
+    throw new Error('Invalid slide image');
+  }
+  const path = candidate.path.replace(/\\/g, '/');
+  const parts = path.split('/');
+  if (path.startsWith('/') || parts.includes('..')) throw new Error('Image path must stay inside the deck directory');
+  return {
+    path,
+    alt: typeof candidate.alt === 'string' ? candidate.alt : '',
+    fit: VALID_IMAGE_FITS.has(candidate.fit) ? candidate.fit : 'cover',
+    placement: VALID_IMAGE_PLACEMENTS.has(candidate.placement) ? candidate.placement : 'right',
+  };
+}
+
 function starterDeck() {
   const first = uid();
   return {
@@ -48,12 +72,15 @@ function normalizeDeck(candidate) {
     let id = typeof slide.id === 'string' && slide.id ? slide.id : uid();
     if (seen.has(id)) id = uid();
     seen.add(id);
-    return {
+    const normalized = {
       id,
       layout: VALID_LAYOUTS.has(slide.layout) ? slide.layout : 'title-body',
       title: typeof slide.title === 'string' ? slide.title : '',
       body: typeof slide.body === 'string' ? slide.body : '',
     };
+    const image = normalizeImage(slide.image);
+    if (image) normalized.image = image;
+    return normalized;
   });
   const selectedId = slides.some((s) => s.id === candidate.selectedId)
     ? candidate.selectedId
@@ -81,6 +108,9 @@ let currentPath = null;
 let presentationIndex = 0;
 let savePulse;
 let autosaveTimer;
+const assetCache = new Map();
+const assetWaiters = new Map();
+const assetRequests = new Map();
 
 function selectedIndex() {
   return Math.max(0, state.slides.findIndex((slide) => slide.id === state.selectedId));
@@ -98,6 +128,52 @@ function nativePost(action, payload = {}) {
   if (!isNative) return;
   window.webkit.messageHandlers.presenter.postMessage({ action, ...payload });
 }
+
+function loadAssetInto(imageElement, path) {
+  if (!path) return;
+  if (assetCache.has(path)) {
+    imageElement.src = assetCache.get(path);
+    imageElement.classList.remove('asset-loading', 'asset-error');
+    return;
+  }
+  imageElement.classList.add('asset-loading');
+  if (!isNative) {
+    imageElement.classList.add('asset-error');
+    return;
+  }
+  if (assetWaiters.has(path)) {
+    assetWaiters.get(path).push(imageElement);
+    return;
+  }
+  assetWaiters.set(path, [imageElement]);
+  const requestId = uid();
+  assetRequests.set(requestId, path);
+  nativePost('loadAsset', { requestId, path });
+}
+
+function makeImageFrame(image, wrapClass, imageClass) {
+  const wrap = document.createElement('div');
+  wrap.className = `${wrapClass} placement-${image.placement}`;
+  const img = document.createElement('img');
+  img.className = `${imageClass} fit-${image.fit}`;
+  img.alt = image.alt || '';
+  img.draggable = false;
+  img.addEventListener('load', () => nativePost('assetRendered', { path: image.path }), { once: true });
+  wrap.append(img);
+  loadAssetInto(img, image.path);
+  return wrap;
+}
+
+function imageClassSuffix(slide) {
+  return slide.image ? ` has-image placement-${slide.image.placement}` : '';
+}
+
+window.addEventListener('error', (event) => {
+  nativePost('runtimeError', { message: event.message || 'JavaScript error' });
+});
+window.addEventListener('unhandledrejection', (event) => {
+  nativePost('runtimeError', { message: String(event.reason || 'Unhandled promise rejection') });
+});
 
 function setSaveStatus(text, pulse = false) {
   el.saveStatus.textContent = text;
@@ -160,13 +236,14 @@ function renderList() {
     thumb.title = `Slide ${index + 1}: ${slide.title || 'Untitled'}`;
 
     const inner = document.createElement('div');
-    inner.className = `thumb-inner ${slide.layout}`;
+    inner.className = `thumb-inner ${slide.layout}${imageClassSuffix(slide)}`;
     const title = document.createElement('div');
     title.className = 'thumb-title';
     title.textContent = slide.title || 'Untitled';
     const body = document.createElement('div');
     body.className = 'thumb-body';
     body.textContent = slide.body;
+    if (slide.image) inner.append(makeImageFrame(slide.image, 'thumb-image-wrap', 'thumb-image'));
     inner.append(title, body);
     thumb.append(inner);
     row.append(number, thumb);
@@ -198,7 +275,9 @@ function renderEditor() {
   el.slideCanvas.replaceChildren();
 
   const content = document.createElement('div');
-  content.className = `slide-content ${slide.layout}`;
+  content.className = `slide-content ${slide.layout}${imageClassSuffix(slide)}`;
+  const text = document.createElement('div');
+  text.className = 'slide-text';
 
   const title = document.createElement('textarea');
   title.className = 'slide-title-input';
@@ -225,8 +304,45 @@ function renderEditor() {
     renderList();
   });
 
-  content.append(title, body);
+  text.append(title, body);
+  content.append(text);
+  if (slide.image) content.append(makeImageFrame(slide.image, 'slide-image-wrap', 'slide-image'));
   el.slideCanvas.append(content);
+  syncImageControls();
+}
+
+function syncImageControls() {
+  const image = selectedSlide()?.image || null;
+  el.chooseImage.textContent = image ? '替换图片' : '添加图片';
+  el.imageControls.hidden = !image;
+  if (!image) return;
+  el.imagePlacement.value = image.placement;
+  el.imageFit.value = image.fit;
+  el.imageAlt.value = image.alt;
+}
+
+function updateImage(patch) {
+  const slide = selectedSlide();
+  if (!slide?.image) return;
+  slide.image = { ...slide.image, ...patch };
+  persist();
+  render();
+}
+
+function chooseImage() {
+  if (!isNative) {
+    alert('图片资产目前需要在 Morrow Presenter Mac App 中添加。');
+    return;
+  }
+  nativePost('chooseImage', { deck: state });
+}
+
+function removeImage() {
+  const slide = selectedSlide();
+  if (!slide?.image) return;
+  delete slide.image;
+  persist();
+  render();
 }
 
 function renderStatus() {
@@ -265,7 +381,7 @@ function addSlide() {
 function duplicateSlide() {
   const index = selectedIndex();
   const source = selectedSlide();
-  const copy = { ...source, id: uid() };
+  const copy = { ...source, id: uid(), ...(source.image ? { image: { ...source.image } } : {}) };
   state.slides.splice(index + 1, 0, copy);
   state.selectedId = copy.id;
   persist();
@@ -345,17 +461,21 @@ async function importDeck(file) {
 function buildPresentationSlide(slide) {
   el.presentationSlide.replaceChildren();
   const content = document.createElement('div');
-  content.className = `present-content ${slide.layout}`;
+  content.className = `present-content ${slide.layout}${imageClassSuffix(slide)}`;
+  const text = document.createElement('div');
+  text.className = 'present-text';
   const title = document.createElement('div');
   title.className = 'present-title';
   title.textContent = slide.title || '';
-  content.append(title);
+  text.append(title);
   if (slide.layout !== 'title' && slide.body) {
     const body = document.createElement('div');
     body.className = 'present-body';
     body.textContent = slide.body;
-    content.append(body);
+    text.append(body);
   }
+  content.append(text);
+  if (slide.image) content.append(makeImageFrame(slide.image, 'present-image-wrap', 'present-image'));
   el.presentationSlide.append(content);
   el.presentationCounter.textContent = `${presentationIndex + 1} / ${state.slides.length}`;
   el.presentationProgress.style.width = `${((presentationIndex + 1) / state.slides.length) * 100}%`;
@@ -425,6 +545,32 @@ window.presenterNativeExternalLoad = ({ json, path }) => {
   }
 };
 
+window.presenterNativeImageChosen = ({ path, name }) => {
+  const slide = selectedSlide();
+  if (!slide) return;
+  slide.image = { path, alt: name || '', fit: 'cover', placement: 'right' };
+  persist();
+  render();
+};
+
+window.presenterNativeAsset = ({ requestId, path, dataURL, error }) => {
+  const expectedPath = assetRequests.get(requestId) || path;
+  assetRequests.delete(requestId);
+  const waiters = assetWaiters.get(expectedPath) || [];
+  assetWaiters.delete(expectedPath);
+  if (dataURL) assetCache.set(expectedPath, dataURL);
+  waiters.forEach((img) => {
+    img.classList.remove('asset-loading');
+    if (dataURL) {
+      img.src = dataURL;
+      img.classList.remove('asset-error');
+    } else {
+      img.classList.add('asset-error');
+      img.title = error || 'Unable to load image';
+    }
+  });
+};
+
 window.presenterNativeFullscreenEnded = () => {
   if (!el.presentation.hidden) {
     el.presentation.hidden = true;
@@ -446,6 +592,16 @@ el.deckTitle.addEventListener('input', () => {
 el.layoutSelect.addEventListener('change', () => {
   updateSelected({ layout: el.layoutSelect.value });
   renderEditor();
+});
+el.chooseImage.addEventListener('click', chooseImage);
+el.removeImage.addEventListener('click', removeImage);
+el.imagePlacement.addEventListener('change', () => updateImage({ placement: el.imagePlacement.value }));
+el.imageFit.addEventListener('change', () => updateImage({ fit: el.imageFit.value }));
+el.imageAlt.addEventListener('input', () => {
+  const slide = selectedSlide();
+  if (!slide?.image) return;
+  slide.image = { ...slide.image, alt: el.imageAlt.value };
+  persist();
 });
 el.addSlide.addEventListener('click', addSlide);
 el.duplicateSlide.addEventListener('click', duplicateSlide);
