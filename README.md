@@ -12,7 +12,7 @@
 ## 安装
 
 ```bash
-cd /Users/huayuxue/workspaces/morrow-presenter
+cd morrow-presenter
 ./scripts/install.sh
 ```
 
