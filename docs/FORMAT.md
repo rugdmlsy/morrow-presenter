@@ -20,6 +20,7 @@
     "snapToGrid": false,
     "showGrid": false,
     "showGuides": true,
+    "showElementLabels": false,
     "gridSize": 2.5,
     "guideX": [50],
     "guideY": [50]
@@ -45,7 +46,7 @@
 - `title`: deck 标题。
 - `selectedId`: GUI selection hint，必须指向一个 slide ID。
 - `theme`: deck 级默认视觉 token。
-- `view`: 编辑器吸附/网格/参考线设置。
+- `view`: 编辑器吸附/网格/参考线/组件标识设置。
 - `slides`: 非空、按顺序排列。
 
 `theme.name` 目前内置 `default`, `dark`, `warm`, `blue`，但其余字段会独立持久化，因此未来可支持自定义主题。
@@ -61,6 +62,10 @@
 - `transition.type`: `none` / `fade`。
 - `transition.duration`: 秒。
 - `elements`: 数组顺序也是 z-order；后面的对象位于更高层。
+
+## Component identification overlay
+
+`view.showElementLabels` controls an editor-only identification overlay. When enabled, each element is labeled with its 1-based position, a derived type/name, and the first 8 characters of its stable UUID. Labels are not rendered in thumbnails, presentation mode, PDF, or PPTX exports. The CLI accepts a unique element-ID prefix of 6 or more characters, so the displayed 8-character ID can be used directly by an agent.
 
 ## Element common fields
 

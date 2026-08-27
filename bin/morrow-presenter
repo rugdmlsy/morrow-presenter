@@ -253,6 +253,7 @@ def normalize_view(raw: object) -> dict:
         "snapToGrid": _bool(raw.get("snapToGrid"), False),
         "showGrid": _bool(raw.get("showGrid"), False),
         "showGuides": _bool(raw.get("showGuides"), True),
+        "showElementLabels": _bool(raw.get("showElementLabels"), False),
         "gridSize": _clamp(_number(raw.get("gridSize"), 2.5), 0.25, 25.0),
         "guideX": nums("guideX", [50.0]), "guideY": nums("guideY", [50.0]),
     }
@@ -473,12 +474,16 @@ def resolve_element(slide_obj: dict, ref: str) -> tuple[int, dict]:
     elements = slide_obj.get("elements", [])
     try: position = int(ref)
     except ValueError: position = 0
-    if position:
-        if not 1 <= position <= len(elements):
-            raise ValueError(f"element position out of range: {position}")
+    if position and len(ref) < 6 and 1 <= position <= len(elements):
         return position - 1, elements[position - 1]
     for index, item in enumerate(elements):
         if item["id"] == ref: return index, item
+    if len(ref) >= 6:
+        matches = [(index, item) for index, item in enumerate(elements) if item["id"].startswith(ref)]
+        if len(matches) == 1: return matches[0]
+        if len(matches) > 1: raise ValueError(f"ambiguous element id prefix: {ref}")
+    if position and 1 <= position <= len(elements): return position - 1, elements[position - 1]
+    if position: raise ValueError(f"element position out of range: {position}")
     raise ValueError(f"unknown element reference: {ref}")
 
 
@@ -582,8 +587,8 @@ def schema() -> dict:
         "elements":{"type":"array","items":{"oneOf":[text_element,shape_element,image_schema(),table_element,connector_element]}},
     }}
     theme_schema={"type":"object","required":["name","fontFamily","titleFontFamily","background","text","accent"],"properties":{k:{"type":"string"} for k in ("name","fontFamily","titleFontFamily","background","text","accent")}}
-    view_schema={"type":"object","required":["snapToObjects","snapToGrid","showGrid","showGuides","gridSize","guideX","guideY"],"properties":{
-        "snapToObjects":{"type":"boolean"},"snapToGrid":{"type":"boolean"},"showGrid":{"type":"boolean"},"showGuides":{"type":"boolean"},"gridSize":{"type":"number"},"guideX":{"type":"array","items":{"type":"number"}},"guideY":{"type":"array","items":{"type":"number"}},
+    view_schema={"type":"object","required":["snapToObjects","snapToGrid","showGrid","showGuides","showElementLabels","gridSize","guideX","guideY"],"properties":{
+        "snapToObjects":{"type":"boolean"},"snapToGrid":{"type":"boolean"},"showGrid":{"type":"boolean"},"showGuides":{"type":"boolean"},"showElementLabels":{"type":"boolean"},"gridSize":{"type":"number"},"guideX":{"type":"array","items":{"type":"number"}},"guideY":{"type":"array","items":{"type":"number"}},
     }}
     return {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Morrow Presenter deck","type":"object","required":["version","title","theme","view","slides"],"properties":{
         "version":{"const":VERSION},"title":{"type":"string"},"selectedId":{"type":"string"},"theme":theme_schema,"view":view_schema,"slides":{"type":"array","minItems":1,"items":slide_schema},
@@ -593,9 +598,9 @@ def schema() -> dict:
 def capabilities() -> dict:
     return {
         "name":"Morrow Presenter","cli":"morrow-presenter","deck_format":"morrowdeck-json-v1","shell_first":True,"requires_mcp":False,
-        "slide_refs":"1-based position or stable slide id","element_refs":"1-based position or stable element id","layouts":list(VALID_LAYOUTS),
+        "slide_refs":"1-based position or stable slide id","element_refs":"1-based position, stable element id, or unique id prefix (6+ chars)","layouts":list(VALID_LAYOUTS),
         "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),"themes":list(VALID_THEME_PRESETS),
-        "features":["multi-object canvas","text boxes","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
+        "features":["multi-object canvas","text boxes","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","element labels","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
         "image_storage":f"relative files under {ASSET_DIR}/",
         "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","image-set","image-update","image-remove","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
         "agent_docs":str(Path(__file__).resolve().parents[1]/"docs"/"AGENT.md"),
@@ -645,7 +650,7 @@ def parser() -> argparse.ArgumentParser:
     sp=subs.add_parser("slide-style"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--background"); add_notes_options(sp); sp.add_argument("--transition",choices=VALID_TRANSITIONS); sp.add_argument("--transition-duration",type=float); add_json(sp)
     sp=subs.add_parser("theme"); sp.add_argument("path",type=Path); add_json(sp)
     sp=subs.add_parser("theme-set"); sp.add_argument("path",type=Path); sp.add_argument("preset",choices=VALID_THEME_PRESETS); sp.add_argument("--apply-all",action="store_true"); add_json(sp)
-    sp=subs.add_parser("view-settings"); sp.add_argument("path",type=Path); sp.add_argument("--snap-to-objects",dest="snap_to_objects",action="store_const",const=True); sp.add_argument("--no-snap-to-objects",dest="snap_to_objects",action="store_const",const=False); sp.add_argument("--snap-to-grid",dest="snap_to_grid",action="store_const",const=True); sp.add_argument("--no-snap-to-grid",dest="snap_to_grid",action="store_const",const=False); sp.add_argument("--show-grid",dest="show_grid",action="store_const",const=True); sp.add_argument("--hide-grid",dest="show_grid",action="store_const",const=False); sp.add_argument("--show-guides",dest="show_guides",action="store_const",const=True); sp.add_argument("--hide-guides",dest="show_guides",action="store_const",const=False); sp.add_argument("--grid-size",type=float); sp.add_argument("--guide-x",type=float,action="append"); sp.add_argument("--guide-y",type=float,action="append"); sp.add_argument("--clear-guides",action="store_true"); add_json(sp)
+    sp=subs.add_parser("view-settings"); sp.add_argument("path",type=Path); sp.add_argument("--snap-to-objects",dest="snap_to_objects",action="store_const",const=True); sp.add_argument("--no-snap-to-objects",dest="snap_to_objects",action="store_const",const=False); sp.add_argument("--snap-to-grid",dest="snap_to_grid",action="store_const",const=True); sp.add_argument("--no-snap-to-grid",dest="snap_to_grid",action="store_const",const=False); sp.add_argument("--show-grid",dest="show_grid",action="store_const",const=True); sp.add_argument("--hide-grid",dest="show_grid",action="store_const",const=False); sp.add_argument("--show-guides",dest="show_guides",action="store_const",const=True); sp.add_argument("--hide-guides",dest="show_guides",action="store_const",const=False); sp.add_argument("--show-element-labels",dest="show_element_labels",action="store_const",const=True); sp.add_argument("--hide-element-labels",dest="show_element_labels",action="store_const",const=False); sp.add_argument("--grid-size",type=float); sp.add_argument("--guide-x",type=float,action="append"); sp.add_argument("--guide-y",type=float,action="append"); sp.add_argument("--clear-guides",action="store_true"); add_json(sp)
     sp=subs.add_parser("elements"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
     sp=subs.add_parser("element-get"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
     sp=subs.add_parser("element-add-text"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("text",nargs="?",default="Text"); add_geometry(sp,defaults=True); add_text_style(sp,defaults=True); sp.add_argument("--fill",default="transparent"); sp.add_argument("--stroke",default="transparent"); sp.add_argument("--stroke-width",type=float,default=0.0); add_json(sp)
@@ -885,7 +890,7 @@ def main() -> int:
             write_deck(path,deck); emit({"ok":True,"theme":deck["theme"],"appliedAll":args.apply_all,"message":f"Theme set to {args.preset}"},args.json)
         elif cmd=="view-settings":
             view=deck["view"]; changed=False
-            for key,value in (("snapToObjects",args.snap_to_objects),("snapToGrid",args.snap_to_grid),("showGrid",args.show_grid),("showGuides",args.show_guides)):
+            for key,value in (("snapToObjects",args.snap_to_objects),("snapToGrid",args.snap_to_grid),("showGrid",args.show_grid),("showGuides",args.show_guides),("showElementLabels",args.show_element_labels)):
                 if value is not None: view[key]=value; changed=True
             if args.grid_size is not None: view["gridSize"]=_clamp(args.grid_size,.25,25); changed=True
             if args.clear_guides: view["guideX"]=[]; view["guideY"]=[]; changed=True

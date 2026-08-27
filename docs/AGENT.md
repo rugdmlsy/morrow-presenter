@@ -14,9 +14,10 @@ morrow-presenter schema --json
 Slide 和 element 都支持：
 
 - 1-based position；
-- 稳定 UUID。
+- 稳定 UUID；
+- 唯一 UUID 前缀（至少 6 个字符）。
 
-多步 mutation 优先保存/复用 UUID，因为增删和 z-order 会改变 position。
+编辑器打开“组件标识”后会直接显示 `#序号 · 类型/名称 · 8位短ID`。8 位短 ID 可直接作为 CLI element ref；多步 mutation 仍优先保存/复用稳定 ID，因为增删和 z-order 会改变 position。
 
 ## Slides
 
@@ -126,7 +127,7 @@ morrow-presenter theme-set talk.morrowdeck blue --apply-all
 
 morrow-presenter view-settings talk.morrowdeck \
   --snap-to-objects --snap-to-grid --show-grid --grid-size 5 \
-  --show-guides --guide-x 25 --guide-x 50 --guide-x 75 --guide-y 50
+  --show-guides --show-element-labels --guide-x 25 --guide-x 50 --guide-x 75 --guide-y 50
 ```
 
 不带 mutation option 的 `view-settings` 用于读取当前配置。

@@ -13,7 +13,7 @@ SYSTEM_IMAGE="/System/Library/Image Capture/Automatic Tasks/MakePDF.app/Contents
 "$CLI" new "$DECK" --title "Advanced smoke" >/dev/null
 "$CLI" set "$DECK" 1 --layout blank >/dev/null
 "$CLI" theme-set "$DECK" dark --apply-all >/dev/null
-"$CLI" view-settings "$DECK" --snap-to-grid --show-grid --grid-size 5 --guide-x 25 --guide-x 75 --guide-y 40 >/dev/null
+"$CLI" view-settings "$DECK" --snap-to-grid --show-grid --show-element-labels --grid-size 5 --guide-x 25 --guide-x 75 --guide-y 40 >/dev/null
 
 A=$("$CLI" element-add-shape "$DECK" 1 --shape rounded-rect --text Agent --x 8 --y 12 --width 24 --height 16 --fill '#dbeafe' --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["id"])')
 B=$("$CLI" element-add-shape "$DECK" 1 --shape ellipse --text System --x 68 --y 12 --width 24 --height 16 --fill '#e0f2fe' --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["id"])')
@@ -43,6 +43,7 @@ p,a,b,conn,table,first_group=sys.argv[1:]
 deck=json.loads(Path(p).read_text())
 assert deck['theme']['name']=='dark'
 assert deck['view']['snapToGrid'] is True and deck['view']['showGrid'] is True
+assert deck['view']['showElementLabels'] is True
 assert deck['view']['gridSize']==5.0
 assert deck['view']['guideX']==[25.0,75.0]
 assert deck['view']['guideY']==[40.0]
@@ -58,6 +59,25 @@ assert byid[a]['groupId'] and byid[a]['groupId']==byid[b]['groupId']
 assert byid[a]['groupId'] != first_group  # ungroup + regroup creates a new group identity
 print('ADVANCED_MODEL_OK')
 PY
+
+SHORT_ID="${A:0:8}"
+"$CLI" element-get "$DECK" 1 "$SHORT_ID" --json > "$TMP_DIR/short-id.json"
+python3 - "$TMP_DIR/short-id.json" "$A" <<'PY'
+import json,sys
+item=json.load(open(sys.argv[1]))
+assert item['id'] == sys.argv[2]
+print('SHORT_ID_REF_OK')
+PY
+
+NUMERIC_DECK="$TMP_DIR/numeric-prefix.morrowdeck"
+"$CLI" new "$NUMERIC_DECK" --title Numeric >/dev/null
+"$CLI" set "$NUMERIC_DECK" 1 --layout blank >/dev/null
+for label in first second third; do "$CLI" element-add-text "$NUMERIC_DECK" 1 "$label" >/dev/null; done
+python3 - "$NUMERIC_DECK" <<'PY'
+import json,sys
+p=sys.argv[1];d=json.load(open(p));d['slides'][0]['elements'][0]['id']='00000003-aaaa-bbbb-cccc-000000000001';open(p,'w').write(json.dumps(d,indent=2)+'\n')
+PY
+"$CLI" element-get "$NUMERIC_DECK" 1 00000003 --json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["position"]==1 and x["text"]=="first"; print("NUMERIC_SHORT_ID_OK")'
 
 "$CLI" export-pdf "$DECK" "$PDF" >/dev/null
 "$CLI" export-pptx "$DECK" "$PPTX" >/dev/null
