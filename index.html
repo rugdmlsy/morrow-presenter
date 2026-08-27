@@ -50,11 +50,20 @@
           <option value="ellipse">椭圆</option>
           <option value="line">直线</option>
           <option value="arrow">箭头</option>
+          <option value="triangle">三角形</option>
+          <option value="diamond">菱形</option>
+          <option value="pentagon">五边形</option>
+          <option value="hexagon">六边形</option>
+          <option value="star">五角星</option>
+          <option value="chevron">V形箭头</option>
         </select>
         <button id="insert-shape" class="ghost">形状</button>
         <button id="choose-image" class="ghost">图片</button>
         <button id="insert-table" class="ghost">表格</button>
         <button id="connect-selected" class="ghost" title="连接两个已选对象">连接</button>
+        <select id="slide-size" aria-label="幻灯片尺寸" title="幻灯片尺寸">
+          <option value="wide">16:9 宽屏</option><option value="standard">4:3 标准</option>
+        </select>
         <select id="theme-preset" aria-label="主题" title="应用主题到整份文稿">
           <option value="default">默认主题</option><option value="dark">深色主题</option><option value="warm">暖色主题</option><option value="blue">蓝色主题</option>
         </select>
@@ -68,6 +77,9 @@
           <option value="fade">淡入</option>
         </select>
         <button id="toggle-notes" class="ghost">备注</button>
+        <input id="footer-text" class="footer-text-input" type="text" placeholder="页脚文字" title="全局页脚文字" />
+        <button id="toggle-footer" class="ghost" title="显示/隐藏页脚文字">页脚</button>
+        <button id="toggle-slide-number" class="ghost" title="显示/隐藏幻灯片页码">页码</button>
         <div class="toolbar-spacer"></div>
         <button id="duplicate-slide" class="ghost">复制页</button>
         <button id="delete-slide" class="danger-ghost">删除页</button>
@@ -93,12 +105,25 @@
         <select id="text-align" title="文本对齐" aria-label="文本对齐">
           <option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option>
         </select>
+        <select id="list-style" title="项目符号/编号" aria-label="列表样式">
+          <option value="none">无列表</option><option value="bullet">• 项目符号</option><option value="number">1. 编号</option>
+        </select>
+        <input id="line-spacing" class="number-control narrow" type="number" min="0.7" max="4" step="0.1" value="1.2" title="行距倍数" aria-label="行距" />
+        <input id="paragraph-spacing" class="number-control narrow" type="number" min="0" max="72" step="1" value="0" title="段后距 pt" aria-label="段后距" />
+        <input id="text-indent" class="number-control narrow" type="number" min="0" max="120" step="2" value="0" title="段落缩进 pt" aria-label="段落缩进" />
+        <button id="text-autofit" class="compact-button" title="文字过多时自动缩小字号">自动适应</button>
         <label class="color-control" title="文字颜色">A <input id="text-color" type="color" value="#202124" /></label>
         <label class="color-control" title="填充颜色">填 <input id="object-fill" type="color" value="#e8e8e4" /></label>
         <button id="no-fill" class="compact-button" title="无填充">无填充</button>
         <label class="color-control" title="边框颜色">线 <input id="object-stroke" type="color" value="#4b4d50" /></label>
         <button id="no-stroke" class="compact-button" title="无边框">无线</button>
         <input id="stroke-width" class="number-control narrow" type="number" min="0" max="20" step="0.5" value="1.5" title="线宽" aria-label="线宽" />
+        <label class="geometry-control" title="X 位置 %">X <input id="geometry-x" class="number-control narrow" type="number" step="0.1" /></label>
+        <label class="geometry-control" title="Y 位置 %">Y <input id="geometry-y" class="number-control narrow" type="number" step="0.1" /></label>
+        <label class="geometry-control" title="宽度 %">W <input id="geometry-width" class="number-control narrow" type="number" min="0.5" step="0.1" /></label>
+        <label class="geometry-control" title="高度 %">H <input id="geometry-height" class="number-control narrow" type="number" min="0.5" step="0.1" /></label>
+        <button id="flip-h" class="compact-button" title="水平翻转">↔翻转</button>
+        <button id="flip-v" class="compact-button" title="垂直翻转">↕翻转</button>
         <input id="rotation" class="number-control narrow" type="number" step="1" value="0" title="旋转角度" aria-label="旋转角度" />
         <input id="opacity" class="number-control narrow" type="number" min="0" max="100" step="5" value="100" title="透明度 %" aria-label="透明度" />
         <button id="crop-toggle" class="compact-button" title="非破坏性裁切">裁切</button>

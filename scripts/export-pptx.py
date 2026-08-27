@@ -11,7 +11,7 @@ from pptx import Presentation
 from pptx.util import Inches,Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE,MSO_CONNECTOR
-from pptx.enum.text import PP_ALIGN,MSO_VERTICAL_ANCHOR
+from pptx.enum.text import PP_ALIGN,MSO_VERTICAL_ANCHOR,MSO_AUTO_SIZE
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.oxml.xmlchemy import OxmlElement
 
@@ -31,8 +31,25 @@ def set_arrowheads(shape, mode):
 
 
 def set_text(box,text,e):
-    tf=box.text_frame; tf.clear(); tf.word_wrap=True; tf.vertical_anchor={'top':MSO_VERTICAL_ANCHOR.TOP,'middle':MSO_VERTICAL_ANCHOR.MIDDLE,'bottom':MSO_VERTICAL_ANCHOR.BOTTOM}.get(e.get('verticalAlign'),MSO_VERTICAL_ANCHOR.TOP); p=tf.paragraphs[0]; p.text=str(text); p.alignment={'left':PP_ALIGN.LEFT,'center':PP_ALIGN.CENTER,'right':PP_ALIGN.RIGHT}.get(e.get('align'),PP_ALIGN.LEFT)
-    for run in p.runs: run.font.name=e.get('fontFamily','Arial'); run.font.size=Pt(float(e.get('fontSize',24))); run.font.bold=e.get('fontWeight',400)>=700; run.font.italic=bool(e.get('italic')); run.font.underline=bool(e.get('underline')); run.font.color.rgb=rgb(e.get('color'),'202124')
+    tf=box.text_frame;tf.clear();tf.word_wrap=True;tf.vertical_anchor={'top':MSO_VERTICAL_ANCHOR.TOP,'middle':MSO_VERTICAL_ANCHOR.MIDDLE,'bottom':MSO_VERTICAL_ANCHOR.BOTTOM}.get(e.get('verticalAlign'),MSO_VERTICAL_ANCHOR.TOP);tf.auto_size=MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE if e.get('autoFit') else MSO_AUTO_SIZE.NONE
+    lines=str(text).split('\n') if str(text) else ['']
+    for i,line in enumerate(lines):
+        p=tf.paragraphs[0] if i==0 else tf.add_paragraph();p.text=line;p.alignment={'left':PP_ALIGN.LEFT,'center':PP_ALIGN.CENTER,'right':PP_ALIGN.RIGHT}.get(e.get('align'),PP_ALIGN.LEFT);p.line_spacing=float(e.get('lineSpacing',1.2));p.space_after=Pt(float(e.get('paragraphSpacing',0)))
+        ppr=p._p.get_or_add_pPr();indent=float(e.get('indent',0));
+        if indent>0:ppr.set('marL',str(int(Pt(indent))))
+        ls=e.get('listStyle','none')
+        if ls=='bullet':node=OxmlElement('a:buChar');node.set('char','•');ppr.append(node)
+        elif ls=='number':node=OxmlElement('a:buAutoNum');node.set('type','arabicPeriod');ppr.append(node)
+        for run in p.runs:run.font.name=e.get('fontFamily','Arial');run.font.size=Pt(float(e.get('fontSize',24)));run.font.bold=e.get('fontWeight',400)>=700;run.font.italic=bool(e.get('italic'));run.font.underline=bool(e.get('underline'));run.font.color.rgb=rgb(e.get('color'),'202124')
+
+def set_flip(shape,e):
+    if not e.get('flipH') and not e.get('flipV'):return
+    try:
+        xfrm=shape._element.spPr.xfrm
+        if e.get('flipH'):xfrm.set('flipH','1')
+        if e.get('flipV'):xfrm.set('flipV','1')
+    except Exception:pass
+
 def fill_line(shape,e):
     fill=e.get('fill','transparent');
     if fill=='transparent': shape.fill.background()
@@ -61,16 +78,16 @@ def add_element(slide,e,deck_path,byid):
         set_arrowheads(sh,e.get('arrow','end'));return
     x,y,w,h=map(float,(e.get('x',0),e.get('y',0),e.get('width',10),e.get('height',10))); left,top,width,height=inchx(x),inchy(y),inchx(w),inchy(h);typ=e['type']
     if typ=='image':
-        sh=slide.shapes.add_picture(cropped_image(deck_path,e),left,top,width,height);sh.rotation=float(e.get('rotation',0));return
+        sh=slide.shapes.add_picture(cropped_image(deck_path,e),left,top,width,height);sh.rotation=float(e.get('rotation',0));set_flip(sh,e);return
     if typ=='text':
         sh=slide.shapes.add_textbox(left,top,width,height);set_text(sh,e.get('text',''),e);fill_line(sh,e);sh.rotation=float(e.get('rotation',0));
         if e.get('role') in ('title','body'): sh.name=f"MorrowPresenter:{e['role']}"
         return
     if typ=='shape':
-        st={'rect':MSO_SHAPE.RECTANGLE,'rounded-rect':MSO_SHAPE.ROUNDED_RECTANGLE,'ellipse':MSO_SHAPE.OVAL}.get(e.get('shape'))
+        st={'rect':MSO_SHAPE.RECTANGLE,'rounded-rect':MSO_SHAPE.ROUNDED_RECTANGLE,'ellipse':MSO_SHAPE.OVAL,'triangle':MSO_SHAPE.ISOSCELES_TRIANGLE,'diamond':MSO_SHAPE.DIAMOND,'pentagon':MSO_SHAPE.PENTAGON,'hexagon':MSO_SHAPE.HEXAGON,'star':MSO_SHAPE.STAR_5_POINT,'chevron':MSO_SHAPE.CHEVRON}.get(e.get('shape'))
         if e.get('shape') in ('line','arrow'):
             sh=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,left,top+height//2,left+width,top+height//2);sh.line.color.rgb=rgb(e.get('stroke'),'4B4D50');sh.line.width=Pt(float(e.get('strokeWidth',1.5)));set_arrowheads(sh,'end' if e.get('shape')=='arrow' else 'none');return
-        sh=slide.shapes.add_shape(st or MSO_SHAPE.RECTANGLE,left,top,width,height);fill_line(sh,e);sh.rotation=float(e.get('rotation',0));set_text(sh,e.get('text',''),e);return
+        sh=slide.shapes.add_shape(st or MSO_SHAPE.RECTANGLE,left,top,width,height);fill_line(sh,e);sh.rotation=float(e.get('rotation',0));set_flip(sh,e);set_text(sh,e.get('text',''),e);return
     if typ=='table':
         sh=slide.shapes.add_table(e['rows'],e['cols'],left,top,width,height);table=sh.table
         for r in range(e['rows']):
@@ -80,14 +97,22 @@ def add_element(slide,e,deck_path,byid):
                     p.alignment={'left':PP_ALIGN.LEFT,'center':PP_ALIGN.CENTER,'right':PP_ALIGN.RIGHT}.get(e.get('align'),PP_ALIGN.LEFT)
                     for run in p.runs:run.font.name=e.get('fontFamily','Arial');run.font.size=Pt(float(e.get('fontSize',18)));run.font.color.rgb=rgb(e.get('color'),'202124')
 
+def add_footer(slide,deck,index):
+    f=deck.get('footer',{});
+    if f.get('showText'):
+        sh=slide.shapes.add_textbox(inchx(4),inchy(94),inchx(72),inchy(4));sh.name='MorrowPresenter:footer';set_text(sh,f.get('text',''),{'fontFamily':f.get('fontFamily','Inter'),'fontSize':f.get('fontSize',11),'fontWeight':400,'italic':False,'underline':False,'color':f.get('color','#666666'),'align':'left','verticalAlign':'bottom','listStyle':'none','lineSpacing':1,'paragraphSpacing':0,'indent':0,'autoFit':False});sh.fill.background();sh.line.fill.background()
+    if f.get('showSlideNumber'):
+        sh=slide.shapes.add_textbox(inchx(88),inchy(94),inchx(8),inchy(4));sh.name='MorrowPresenter:slide-number';set_text(sh,str(index+1),{'fontFamily':f.get('fontFamily','Inter'),'fontSize':f.get('fontSize',11),'fontWeight':400,'italic':False,'underline':False,'color':f.get('color','#666666'),'align':'right','verticalAlign':'bottom','listStyle':'none','lineSpacing':1,'paragraphSpacing':0,'indent':0,'autoFit':False});sh.fill.background();sh.line.fill.background()
+
 def main():
     if len(sys.argv)!=3:raise SystemExit('usage: export-pptx.py deck.morrowdeck output.pptx')
-    deck_path=Path(sys.argv[1]).resolve();out=Path(sys.argv[2]).resolve();deck=json.loads(deck_path.read_text());prs=Presentation();prs.slide_width=Inches(SW);prs.slide_height=Inches(SH);blank=prs.slide_layouts[6]
+    deck_path=Path(sys.argv[1]).resolve();out=Path(sys.argv[2]).resolve();deck=json.loads(deck_path.read_text());page=deck.get('page',{});globals()['SW']=float(page.get('width',13.333333));globals()['SH']=float(page.get('height',7.5));prs=Presentation();prs.slide_width=Inches(SW);prs.slide_height=Inches(SH);blank=prs.slide_layouts[6]
     # remove default first slide if any only as created by template no slides normally
-    for data in deck['slides']:
+    for index,data in enumerate(deck['slides']):
         slide=prs.slides.add_slide(blank); bg=slide.background.fill;bg.solid();bg.fore_color.rgb=rgb(data.get('background',deck.get('theme',{}).get('background')),'FFFFFF')
         byid={e['id']:e for e in data.get('elements',[])}
         for e in data.get('elements',[]):add_element(slide,e,deck_path,byid)
+        add_footer(slide,deck,index)
         if data.get('notes'):
             try: slide.notes_slide.notes_text_frame.text=data['notes']
             except Exception: pass

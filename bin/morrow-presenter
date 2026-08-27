@@ -21,15 +21,20 @@ import uuid
 VERSION = 1
 VALID_LAYOUTS = ("title-body", "title", "section", "blank")
 VALID_ELEMENT_TYPES = ("text", "shape", "image", "table", "connector")
-VALID_SHAPES = ("rect", "rounded-rect", "ellipse", "line", "arrow")
+VALID_SHAPES = ("rect", "rounded-rect", "ellipse", "line", "arrow", "triangle", "diamond", "pentagon", "hexagon", "star", "chevron")
 VALID_ALIGN = ("left", "center", "right")
 VALID_VALIGN = ("top", "middle", "bottom")
 VALID_TEXT_ROLES = ("title", "body")
+VALID_LIST_STYLES = ("none", "bullet", "number")
 VALID_TRANSITIONS = ("none", "fade")
 VALID_ALIGN_MODES = ("left", "center", "right", "top", "middle", "bottom", "distribute-h", "distribute-v")
 VALID_CONNECTOR_ARROWS = ("none", "end", "both")
 VALID_CONNECTOR_ANCHORS = ("auto", "top", "right", "bottom", "left", "center")
 VALID_THEME_PRESETS = ("default", "dark", "warm", "blue")
+PAGE_PRESETS = {
+    "wide": {"preset":"wide","width":13.333333,"height":7.5},
+    "standard": {"preset":"standard","width":10.0,"height":7.5},
+}
 SLIDE_ASPECT = 16 / 9
 DEFAULT_IMAGE_WIDTH = 40.0
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
@@ -67,10 +72,37 @@ def _safe_asset_path(path: object) -> str:
     return path
 
 
-def image_height_for_width(width: float, intrinsic_width: float, intrinsic_height: float) -> float:
-    aspect = intrinsic_width / intrinsic_height if intrinsic_width > 0 and intrinsic_height > 0 else SLIDE_ASPECT
-    return width * SLIDE_ASPECT / aspect
+def image_height_for_width(width: float, intrinsic_width: float, intrinsic_height: float, slide_aspect: float = SLIDE_ASPECT) -> float:
+    aspect = intrinsic_width / intrinsic_height if intrinsic_width > 0 and intrinsic_height > 0 else slide_aspect
+    return width * slide_aspect / aspect
 
+
+
+def normalize_page(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    preset = raw.get("preset")
+    if preset in PAGE_PRESETS:
+        return dict(PAGE_PRESETS[preset])
+    width = _clamp(_number(raw.get("width"), 13.333333), 1.0, 100.0)
+    height = _clamp(_number(raw.get("height"), 7.5), 1.0, 100.0)
+    return {"preset":"custom","width":width,"height":height}
+
+
+def normalize_footer(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "text": _string(raw.get("text")),
+        "showText": _bool(raw.get("showText"), False),
+        "showSlideNumber": _bool(raw.get("showSlideNumber"), False),
+        "fontFamily": _string(raw.get("fontFamily"), "Inter"),
+        "fontSize": _clamp(_number(raw.get("fontSize"), 11.0), 6.0, 40.0),
+        "color": _string(raw.get("color"), "#666666"),
+    }
+
+
+def page_aspect(deck: dict) -> float:
+    page = deck.get("page", PAGE_PRESETS["wide"])
+    return float(page["width"]) / float(page["height"])
 
 def normalize_crop(raw: object) -> dict:
     raw = raw if isinstance(raw, dict) else {}
@@ -105,6 +137,7 @@ def element_common(raw: dict, *, default_width: float, default_height: float) ->
         "opacity": _clamp(_number(raw.get("opacity"), 1.0), 0.0, 1.0),
         "locked": _bool(raw.get("locked"), False),
         "groupId": raw.get("groupId") if isinstance(raw.get("groupId"), str) and raw.get("groupId") else None,
+        "flipH": _bool(raw.get("flipH"), False), "flipV": _bool(raw.get("flipV"), False),
     }
 
 
@@ -115,7 +148,7 @@ def normalize_image_element(raw: object) -> dict:
     iw = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
     ih = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
     width = _clamp(_number(raw.get("width"), DEFAULT_IMAGE_WIDTH), 1.0, 400.0)
-    height = image_height_for_width(width, iw, ih)
+    height = _clamp(_number(raw.get("height"), image_height_for_width(width, iw, ih)), 1.0, 400.0)
     common = element_common(raw, default_width=width, default_height=height)
     common["width"] = width
     common["height"] = height
@@ -127,6 +160,7 @@ def normalize_image_element(raw: object) -> dict:
         "intrinsicWidth": iw, "intrinsicHeight": ih,
         "crop": normalize_crop(raw.get("crop")),
         "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "flipH": common["flipH"], "flipV": common["flipV"],
     }
 
 
@@ -142,6 +176,11 @@ def normalize_text_style(raw: dict) -> dict:
         "color": _string(raw.get("color"), "#202124"),
         "align": align,
         "verticalAlign": valign,
+        "listStyle": raw.get("listStyle") if raw.get("listStyle") in VALID_LIST_STYLES else "none",
+        "lineSpacing": _clamp(_number(raw.get("lineSpacing"), 1.2), 0.7, 4.0),
+        "paragraphSpacing": _clamp(_number(raw.get("paragraphSpacing"), 0.0), 0.0, 72.0),
+        "indent": _clamp(_number(raw.get("indent"), 0.0), 0.0, 120.0),
+        "autoFit": _bool(raw.get("autoFit"), False),
     }
 
 
@@ -155,6 +194,7 @@ def normalize_text_element(raw: object) -> dict:
         "text": _string(raw.get("text")),
         "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
         "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "flipH": common["flipH"], "flipV": common["flipV"],
         "fill": _string(raw.get("fill"), "transparent"),
         "stroke": _string(raw.get("stroke"), "transparent"),
         "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 0.0), 0.0, 20.0),
@@ -173,6 +213,7 @@ def normalize_shape_element(raw: object) -> dict:
         "text": _string(raw.get("text")),
         "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
         "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "flipH": common["flipH"], "flipV": common["flipV"],
         "fill": _string(raw.get("fill"), "#e8e8e4"),
         "stroke": _string(raw.get("stroke"), "#4b4d50"),
         "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 1.5), 0.0, 20.0),
@@ -196,6 +237,7 @@ def normalize_table_element(raw: object) -> dict:
         "id": common["id"], "type": "table", "rows": rows, "cols": cols, "cells": cells,
         "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
         "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "flipH": common["flipH"], "flipV": common["flipV"],
         "fill": _string(raw.get("fill"), "#ffffff"), "headerFill": _string(raw.get("headerFill"), "#e8e8e4"),
         "stroke": _string(raw.get("stroke"), "#777777"), "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 1.0), 0.0, 20.0),
         **style,
@@ -334,7 +376,7 @@ def slide(title: str = "", body: str = "", layout: str = "title-body", theme: di
 
 def new_deck(title: str = "Untitled deck") -> dict:
     theme=normalize_theme(None);first=slide("", "", "title", theme)
-    return {"version": VERSION, "title": title, "selectedId": first["id"], "theme": theme, "view": normalize_view(None), "slides": [first]}
+    return {"version": VERSION, "title": title, "selectedId": first["id"], "page": normalize_page(PAGE_PRESETS["wide"]), "footer": normalize_footer(None), "theme": theme, "view": normalize_view(None), "slides": [first]}
 
 
 def normalize(candidate: object) -> dict:
@@ -344,6 +386,7 @@ def normalize(candidate: object) -> dict:
     if not isinstance(raw_slides, list) or not raw_slides:
         raise ValueError("deck.slides must be a non-empty array")
     theme = normalize_theme(candidate.get("theme"))
+    page = normalize_page(candidate.get("page")); footer = normalize_footer(candidate.get("footer"))
     seen_slides: set[str] = set()
     slides: list[dict] = []
     for index, raw in enumerate(raw_slides, 1):
@@ -376,7 +419,7 @@ def normalize(candidate: object) -> dict:
     if selected not in seen_slides:
         selected = slides[0]["id"]
     title = candidate.get("title") if isinstance(candidate.get("title"), str) and candidate.get("title").strip() else "Untitled deck"
-    return {"version": VERSION, "title": title, "selectedId": selected, "theme": theme, "view": normalize_view(candidate.get("view")), "slides": slides}
+    return {"version": VERSION, "title": title, "selectedId": selected, "page": page, "footer": footer, "theme": theme, "view": normalize_view(candidate.get("view")), "slides": slides}
 
 
 def read_deck(path: Path) -> dict:
@@ -569,7 +612,7 @@ def image_schema() -> dict:
     return {"type":"object","required":["id","type","path","x","y","width","height","intrinsicWidth","intrinsicHeight","crop"],"properties":{
         "id":{"type":"string"},"type":{"const":"image"},"path":{"type":"string","minLength":1},"alt":{"type":"string"},
         "x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},
-        "intrinsicWidth":{"type":"number","exclusiveMinimum":0},"intrinsicHeight":{"type":"number","exclusiveMinimum":0},"rotation":{"type":"number"},"opacity":{"type":"number","minimum":0,"maximum":1},"locked":{"type":"boolean"},
+        "intrinsicWidth":{"type":"number","exclusiveMinimum":0},"intrinsicHeight":{"type":"number","exclusiveMinimum":0},"rotation":{"type":"number"},"opacity":{"type":"number","minimum":0,"maximum":1},"locked":{"type":"boolean"},"groupId":{"type":["string","null"]},"flipH":{"type":"boolean"},"flipV":{"type":"boolean"},
         "crop":{"type":"object","required":["left","top","right","bottom"],"properties":{k:{"type":"number","minimum":0,"maximum":95} for k in ("left","top","right","bottom")}}
     }}
 
@@ -579,12 +622,13 @@ def schema() -> dict:
         "id":{"type":"string"}, "x":{"type":"number"}, "y":{"type":"number"},
         "width":{"type":"number","exclusiveMinimum":0}, "height":{"type":"number","exclusiveMinimum":0},
         "rotation":{"type":"number"}, "opacity":{"type":"number","minimum":0,"maximum":1},
-        "locked":{"type":"boolean"}, "groupId":{"type":["string","null"]},
+        "locked":{"type":"boolean"}, "groupId":{"type":["string","null"]}, "flipH":{"type":"boolean"}, "flipV":{"type":"boolean"},
     }
     text_style = {
         "fontFamily":{"type":"string"}, "fontSize":{"type":"number"}, "fontWeight":{"type":"integer"},
         "italic":{"type":"boolean"}, "underline":{"type":"boolean"}, "color":{"type":"string"},
         "align":{"enum":list(VALID_ALIGN)}, "verticalAlign":{"enum":list(VALID_VALIGN)},
+        "listStyle":{"enum":list(VALID_LIST_STYLES)}, "lineSpacing":{"type":"number"}, "paragraphSpacing":{"type":"number"}, "indent":{"type":"number"}, "autoFit":{"type":"boolean"},
     }
     text_element={"type":"object","required":["id","type","text","x","y","width","height"],"properties":{**common,"type":{"const":"text"},"text":{"type":"string"},"fill":{"type":"string"},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},**text_style}}
     shape_element={"type":"object","required":["id","type","shape","x","y","width","height"],"properties":{**common,"type":{"const":"shape"},"shape":{"enum":list(VALID_SHAPES)},"text":{"type":"string"},"fill":{"type":"string"},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},**text_style}}
@@ -600,8 +644,10 @@ def schema() -> dict:
     view_schema={"type":"object","required":["snapToObjects","snapToGrid","showGrid","showGuides","showElementLabels","gridSize","guideX","guideY"],"properties":{
         "snapToObjects":{"type":"boolean"},"snapToGrid":{"type":"boolean"},"showGrid":{"type":"boolean"},"showGuides":{"type":"boolean"},"showElementLabels":{"type":"boolean"},"gridSize":{"type":"number"},"guideX":{"type":"array","items":{"type":"number"}},"guideY":{"type":"array","items":{"type":"number"}},
     }}
-    return {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Morrow Presenter deck","type":"object","required":["version","title","theme","view","slides"],"properties":{
-        "version":{"const":VERSION},"title":{"type":"string"},"selectedId":{"type":"string"},"theme":theme_schema,"view":view_schema,"slides":{"type":"array","minItems":1,"items":slide_schema},
+    page_schema={"type":"object","required":["preset","width","height"],"properties":{"preset":{"enum":["wide","standard","custom"]},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0}}}
+    footer_schema={"type":"object","required":["text","showText","showSlideNumber","fontFamily","fontSize","color"],"properties":{"text":{"type":"string"},"showText":{"type":"boolean"},"showSlideNumber":{"type":"boolean"},"fontFamily":{"type":"string"},"fontSize":{"type":"number"},"color":{"type":"string"}}}
+    return {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Morrow Presenter deck","type":"object","required":["version","title","page","footer","theme","view","slides"],"properties":{
+        "version":{"const":VERSION},"title":{"type":"string"},"selectedId":{"type":"string"},"page":page_schema,"footer":footer_schema,"theme":theme_schema,"view":view_schema,"slides":{"type":"array","minItems":1,"items":slide_schema},
     }}
 
 
@@ -610,9 +656,9 @@ def capabilities() -> dict:
         "name":"Morrow Presenter","cli":"morrow-presenter","deck_format":"morrowdeck-json-v1","shell_first":True,"requires_mcp":False,
         "slide_refs":"1-based position or stable slide id","element_refs":"1-based position, stable element id, unique id prefix (6+ chars), @title, or @body","layouts":list(VALID_LAYOUTS),
         "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),"themes":list(VALID_THEME_PRESETS),
-        "features":["multi-object canvas","unified title/body text roles","text boxes","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","element labels","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
+        "features":["multi-object canvas","unified title/body text roles","text boxes","bullets and numbering","paragraph spacing and indent","text autofit","precise geometry","object flipping","wide and standard slide sizes","footer and slide numbers","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","element labels","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
         "image_storage":f"relative files under {ASSET_DIR}/",
-        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
+        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","page-size","footer-set","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
         "agent_docs":str(Path(__file__).resolve().parents[1]/"docs"/"AGENT.md"),
     }
 
@@ -638,6 +684,12 @@ def add_text_style(sp, *, defaults=False):
     sp.add_argument("--color", default="#202124" if defaults else None)
     sp.add_argument("--align", choices=VALID_ALIGN, default="left" if defaults else None)
     sp.add_argument("--vertical-align", choices=VALID_VALIGN, default="top" if defaults else None)
+    sp.add_argument("--list-style", choices=VALID_LIST_STYLES, default="none" if defaults else None)
+    sp.add_argument("--line-spacing", type=float, default=1.2 if defaults else None)
+    sp.add_argument("--paragraph-spacing", type=float, default=0.0 if defaults else None)
+    sp.add_argument("--indent", type=float, default=0.0 if defaults else None)
+    sp.add_argument("--auto-fit", dest="auto_fit", action="store_const", const=True, default=False if defaults else None)
+    sp.add_argument("--no-auto-fit", dest="auto_fit", action="store_const", const=False)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -658,6 +710,8 @@ def parser() -> argparse.ArgumentParser:
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
     sp=subs.add_parser("move"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--to",type=int,required=True); add_json(sp)
     sp=subs.add_parser("slide-style"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--background"); add_notes_options(sp); sp.add_argument("--transition",choices=VALID_TRANSITIONS); sp.add_argument("--transition-duration",type=float); add_json(sp)
+    sp=subs.add_parser("page-size"); sp.add_argument("path",type=Path); sp.add_argument("preset",choices=tuple(PAGE_PRESETS)); add_json(sp)
+    sp=subs.add_parser("footer-set"); sp.add_argument("path",type=Path); sp.add_argument("--text"); sp.add_argument("--show-text",dest="show_text",action="store_const",const=True); sp.add_argument("--hide-text",dest="show_text",action="store_const",const=False); sp.add_argument("--show-slide-number",dest="show_slide_number",action="store_const",const=True); sp.add_argument("--hide-slide-number",dest="show_slide_number",action="store_const",const=False); sp.add_argument("--font-family"); sp.add_argument("--font-size",type=float); sp.add_argument("--color"); add_json(sp)
     sp=subs.add_parser("theme"); sp.add_argument("path",type=Path); add_json(sp)
     sp=subs.add_parser("theme-set"); sp.add_argument("path",type=Path); sp.add_argument("preset",choices=VALID_THEME_PRESETS); sp.add_argument("--apply-all",action="store_true"); add_json(sp)
     sp=subs.add_parser("view-settings"); sp.add_argument("path",type=Path); sp.add_argument("--snap-to-objects",dest="snap_to_objects",action="store_const",const=True); sp.add_argument("--no-snap-to-objects",dest="snap_to_objects",action="store_const",const=False); sp.add_argument("--snap-to-grid",dest="snap_to_grid",action="store_const",const=True); sp.add_argument("--no-snap-to-grid",dest="snap_to_grid",action="store_const",const=False); sp.add_argument("--show-grid",dest="show_grid",action="store_const",const=True); sp.add_argument("--hide-grid",dest="show_grid",action="store_const",const=False); sp.add_argument("--show-guides",dest="show_guides",action="store_const",const=True); sp.add_argument("--hide-guides",dest="show_guides",action="store_const",const=False); sp.add_argument("--show-element-labels",dest="show_element_labels",action="store_const",const=True); sp.add_argument("--hide-element-labels",dest="show_element_labels",action="store_const",const=False); sp.add_argument("--grid-size",type=float); sp.add_argument("--guide-x",type=float,action="append"); sp.add_argument("--guide-y",type=float,action="append"); sp.add_argument("--clear-guides",action="store_true"); add_json(sp)
@@ -668,7 +722,7 @@ def parser() -> argparse.ArgumentParser:
     sp=subs.add_parser("element-add-image"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("image",type=Path); sp.add_argument("--x",type=float,default=55.0); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float,default=DEFAULT_IMAGE_WIDTH); sp.add_argument("--alt",default=""); add_json(sp)
     sp=subs.add_parser("element-add-table"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--rows",type=int,default=3); sp.add_argument("--cols",type=int,default=3); sp.add_argument("--cells-json"); add_geometry(sp,defaults=True); sp.add_argument("--font-family",default="Inter"); sp.add_argument("--font-size",type=float,default=18.0); sp.add_argument("--color",default="#202124"); sp.add_argument("--fill",default="#ffffff"); sp.add_argument("--header-fill",default="#e8e8e4"); sp.add_argument("--stroke",default="#777777"); sp.add_argument("--stroke-width",type=float,default=1.0); add_json(sp)
     sp=subs.add_parser("element-add-connector"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("from_element"); sp.add_argument("to_element"); sp.add_argument("--from-anchor",choices=VALID_CONNECTOR_ANCHORS,default="auto"); sp.add_argument("--to-anchor",choices=VALID_CONNECTOR_ANCHORS,default="auto"); sp.add_argument("--arrow",choices=VALID_CONNECTOR_ARROWS,default="end"); sp.add_argument("--stroke",default="#4b4d50"); sp.add_argument("--stroke-width",type=float,default=2.0); sp.add_argument("--dash",action="store_true"); add_json(sp)
-    sp=subs.add_parser("element-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("--role",choices=("none",*VALID_TEXT_ROLES)); add_geometry(sp); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--text"); sp.add_argument("--alt"); sp.add_argument("--shape",choices=VALID_SHAPES); add_text_style(sp); sp.add_argument("--fill"); sp.add_argument("--header-fill"); sp.add_argument("--stroke"); sp.add_argument("--stroke-width",type=float); sp.add_argument("--arrow",choices=VALID_CONNECTOR_ARROWS); sp.add_argument("--dash",dest="dash",action="store_const",const=True); sp.add_argument("--solid",dest="dash",action="store_const",const=False); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--lock",dest="locked",action="store_const",const=True); sp.add_argument("--unlock",dest="locked",action="store_const",const=False); add_json(sp)
+    sp=subs.add_parser("element-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("--role",choices=("none",*VALID_TEXT_ROLES)); add_geometry(sp); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--flip-h",dest="flip_h",action="store_const",const=True); sp.add_argument("--no-flip-h",dest="flip_h",action="store_const",const=False); sp.add_argument("--flip-v",dest="flip_v",action="store_const",const=True); sp.add_argument("--no-flip-v",dest="flip_v",action="store_const",const=False); sp.add_argument("--text"); sp.add_argument("--alt"); sp.add_argument("--shape",choices=VALID_SHAPES); add_text_style(sp); sp.add_argument("--fill"); sp.add_argument("--header-fill"); sp.add_argument("--stroke"); sp.add_argument("--stroke-width",type=float); sp.add_argument("--arrow",choices=VALID_CONNECTOR_ARROWS); sp.add_argument("--dash",dest="dash",action="store_const",const=True); sp.add_argument("--solid",dest="dash",action="store_const",const=False); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--lock",dest="locked",action="store_const",const=True); sp.add_argument("--unlock",dest="locked",action="store_const",const=False); add_json(sp)
     for name in ("element-delete","element-duplicate"):
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
     sp=subs.add_parser("table-set"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("row",type=int); sp.add_argument("col",type=int); sp.add_argument("value"); add_json(sp)
@@ -687,12 +741,12 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def make_image_element(path: Path, source: Path, x: float, y: float|None, width: float, alt: str) -> dict:
-    rel=import_asset(path, source); iw,ih=image_dimensions(source); width=_clamp(width,1.0,400.0); height=image_height_for_width(width,iw,ih); y=(100-height)/2 if y is None else y
-    return normalize_image_element({"type":"image","path":rel,"alt":alt,"x":x,"y":y,"width":width,"intrinsicWidth":iw,"intrinsicHeight":ih,"crop":{"left":0,"top":0,"right":0,"bottom":0}})
+def make_image_element(path: Path, source: Path, x: float, y: float|None, width: float, alt: str, slide_aspect: float = SLIDE_ASPECT) -> dict:
+    rel=import_asset(path, source); iw,ih=image_dimensions(source); width=_clamp(width,1.0,400.0); height=image_height_for_width(width,iw,ih,slide_aspect); y=(100-height)/2 if y is None else y
+    return normalize_image_element({"type":"image","path":rel,"alt":alt,"x":x,"y":y,"width":width,"height":height,"intrinsicWidth":iw,"intrinsicHeight":ih,"crop":{"left":0,"top":0,"right":0,"bottom":0}})
 
 
-def apply_element_update(element: dict, args: argparse.Namespace) -> bool:
+def apply_element_update(element: dict, args: argparse.Namespace, slide_aspect: float = SLIDE_ASPECT) -> bool:
     changed=False
     kind=element["type"]
     role_arg=getattr(args,"role",None)
@@ -702,12 +756,12 @@ def apply_element_update(element: dict, args: argparse.Namespace) -> bool:
     if args.scale is not None:
         if args.scale <= 0: raise ValueError("--scale must be positive")
         element["width"]=_clamp(element["width"]*args.scale,.5,400.0)
-        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"])
+        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"],slide_aspect)
         else: element["height"]=_clamp(element["height"]*args.scale,.5,400.0)
         changed=True
     if args.width is not None:
         element["width"]=_clamp(args.width,.5,400.0)
-        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"])
+        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"],slide_aspect)
         changed=True
     if args.height is not None:
         if kind=="image":
@@ -715,10 +769,10 @@ def apply_element_update(element: dict, args: argparse.Namespace) -> bool:
             target=_clamp(args.height,.5,400.0); ratio=element["width"]/element["height"] if element["height"] else 1; element["height"]=target; element["width"]=_clamp(target*ratio,.5,400.0)
         else: element["height"]=_clamp(args.height,.5,400.0)
         changed=True
-    mapping=(("x",args.x),("y",args.y),("rotation",args.rotation),("opacity",args.opacity),("text",args.text),("alt",args.alt),("shape",args.shape),("fontFamily",args.font_family),("fontSize",args.font_size),("fontWeight",args.font_weight),("italic",args.italic),("underline",args.underline),("color",args.color),("align",args.align),("verticalAlign",args.vertical_align),("fill",args.fill),("headerFill",getattr(args,"header_fill",None)),("stroke",args.stroke),("strokeWidth",args.stroke_width),("arrow",getattr(args,"arrow",None)),("dash",getattr(args,"dash",None)),("locked",args.locked))
+    mapping=(("x",args.x),("y",args.y),("rotation",args.rotation),("opacity",args.opacity),("flipH",getattr(args,"flip_h",None)),("flipV",getattr(args,"flip_v",None)),("text",args.text),("alt",args.alt),("shape",args.shape),("fontFamily",args.font_family),("fontSize",args.font_size),("fontWeight",args.font_weight),("italic",args.italic),("underline",args.underline),("color",args.color),("align",args.align),("verticalAlign",args.vertical_align),("listStyle",getattr(args,"list_style",None)),("lineSpacing",getattr(args,"line_spacing",None)),("paragraphSpacing",getattr(args,"paragraph_spacing",None)),("indent",getattr(args,"indent",None)),("autoFit",getattr(args,"auto_fit",None)),("fill",args.fill),("headerFill",getattr(args,"header_fill",None)),("stroke",args.stroke),("strokeWidth",args.stroke_width),("arrow",getattr(args,"arrow",None)),("dash",getattr(args,"dash",None)),("locked",args.locked))
     for key,value in mapping:
         if value is None: continue
-        allowed = (key in {"x","y","rotation","opacity","locked"} and kind!="connector") or (key in {"opacity","locked"} and kind=="connector") or (kind=="image" and key=="alt") or (kind=="text" and key in {"text","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="shape" and key in {"text","shape","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="table" and key in {"fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","headerFill","stroke","strokeWidth"}) or (kind=="connector" and key in {"stroke","strokeWidth","arrow","dash"})
+        allowed = (key in {"x","y","rotation","opacity","locked"} and kind!="connector") or (key in {"flipH","flipV"} and kind in {"image","shape"}) or (key in {"opacity","locked"} and kind=="connector") or (kind=="image" and key=="alt") or (kind=="text" and key in {"text","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","listStyle","lineSpacing","paragraphSpacing","indent","autoFit","fill","stroke","strokeWidth"}) or (kind=="shape" and key in {"text","shape","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","listStyle","lineSpacing","paragraphSpacing","indent","autoFit","fill","stroke","strokeWidth"}) or (kind=="table" and key in {"fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","headerFill","stroke","strokeWidth"}) or (kind=="connector" and key in {"stroke","strokeWidth","arrow","dash"})
         if allowed: element[key]=value; changed=True
     crop_values={"left":args.crop_left,"top":args.crop_top,"right":args.crop_right,"bottom":args.crop_bottom}
     if args.reset_crop:
@@ -893,6 +947,19 @@ def main() -> int:
             if args.transition_duration is not None: item["transition"]["duration"]=_clamp(args.transition_duration,.05,5); changed=True
             if not changed: raise ValueError("slide-style requires background, notes, or transition options")
             write_deck(path,deck); emit({"ok":True,"position":index+1,"background":item["background"],"notes":item["notes"],"transition":item["transition"],"message":f"Updated slide {index+1} style"},args.json)
+        elif cmd=="page-size":
+            page=dict(PAGE_PRESETS[args.preset]); aspect=page["width"]/page["height"]; deck["page"]=page
+            for slide_obj in deck["slides"]:
+                for e in slide_obj["elements"]:
+                    if e.get("type")=="image": e["height"]=image_height_for_width(e["width"],e["intrinsicWidth"],e["intrinsicHeight"],aspect)
+            write_deck(path,deck); emit({"ok":True,"page":page,"message":f"Slide size set to {args.preset}"},args.json)
+        elif cmd=="footer-set":
+            footer=deck["footer"]; changed=False
+            for key,value in (("text",args.text),("showText",args.show_text),("showSlideNumber",args.show_slide_number),("fontFamily",args.font_family),("fontSize",args.font_size),("color",args.color)):
+                if value is not None: footer[key]=value; changed=True
+            deck["footer"]=normalize_footer(footer)
+            if changed: write_deck(path,deck); emit({"ok":True,"footer":deck["footer"],"message":"Updated footer"},args.json)
+            else: emit(deck["footer"],args.json)
         elif cmd=="theme":
             emit(deck["theme"],args.json)
         elif cmd=="theme-set":
@@ -920,15 +987,15 @@ def main() -> int:
         elif cmd=="element-get":
             _,item=resolve_slide(deck,args.slide); index,e=resolve_element(item,args.element); emit({"position":index+1,**e},args.json)
         elif cmd=="element-add-text":
-            sidx,item=resolve_slide(deck,args.slide); e=normalize_text_element({"type":"text","role":None if args.role=="none" else args.role,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width});
+            sidx,item=resolve_slide(deck,args.slide); e=normalize_text_element({"type":"text","role":None if args.role=="none" else args.role,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"listStyle":args.list_style,"lineSpacing":args.line_spacing,"paragraphSpacing":args.paragraph_spacing,"indent":args.indent,"autoFit":args.auto_fit,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width});
             if e.get("role"):
                 for other in item["elements"]:
                     if other.get("type")=="text" and other.get("role")==e["role"]: other["role"]=None
             item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added text box"},args.json)
         elif cmd=="element-add-shape":
-            sidx,item=resolve_slide(deck,args.slide); e=normalize_shape_element({"type":"shape","shape":args.shape,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":f"Added {args.shape} shape"},args.json)
+            sidx,item=resolve_slide(deck,args.slide); e=normalize_shape_element({"type":"shape","shape":args.shape,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"listStyle":args.list_style,"lineSpacing":args.line_spacing,"paragraphSpacing":args.paragraph_spacing,"indent":args.indent,"autoFit":args.auto_fit,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":f"Added {args.shape} shape"},args.json)
         elif cmd=="element-add-image":
-            sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added image"},args.json)
+            sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt,page_aspect(deck)); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added image"},args.json)
         elif cmd=="element-add-table":
             sidx,item=resolve_slide(deck,args.slide); cells=[]
             if args.cells_json:
@@ -941,7 +1008,7 @@ def main() -> int:
             e=normalize_connector_element({"type":"connector","from":{"elementId":a["id"],"anchor":args.from_anchor},"to":{"elementId":b["id"],"anchor":args.to_anchor},"arrow":args.arrow,"stroke":args.stroke,"strokeWidth":args.stroke_width,"dash":args.dash}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added connector"},args.json)
         elif cmd=="element-update":
             sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element)
-            if not apply_element_update(e,args): raise ValueError("element-update requires at least one update option")
+            if not apply_element_update(e,args,page_aspect(deck)): raise ValueError("element-update requires at least one update option")
             if e.get("type")=="text" and e.get("role"):
                 for other in item["elements"]:
                     if other is not e and other.get("type")=="text" and other.get("role")==e["role"]: other["role"]=None

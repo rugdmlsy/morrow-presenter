@@ -10,6 +10,8 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.dml import MSO_FILL_TYPE
+from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.oxml.ns import qn
 
 SLIDE_ASPECT=16/9
 
@@ -49,13 +51,31 @@ def first_text_style(shape):
                 try:
                     if f.color.rgb is not None:out['color']='#'+str(f.color.rgb)
                 except Exception:pass
+        if tf.paragraphs:
+            p=tf.paragraphs[0];ppr=p._p.pPr
+            try:
+                if ppr is not None and ppr.find(qn('a:buChar')) is not None:out['listStyle']='bullet'
+                elif ppr is not None and ppr.find(qn('a:buAutoNum')) is not None:out['listStyle']='number'
+                else:out['listStyle']='none'
+            except Exception:out['listStyle']='none'
+            try:out['lineSpacing']=float(p.line_spacing) if isinstance(p.line_spacing,float) else 1.2
+            except Exception:out['lineSpacing']=1.2
+            try:out['paragraphSpacing']=float(p.space_after.pt) if p.space_after is not None else 0.0
+            except Exception:out['paragraphSpacing']=0.0
+            try:out['indent']=float(ppr.get('marL',0))/12700 if ppr is not None else 0.0
+            except Exception:out['indent']=0.0
         va=getattr(tf,'vertical_anchor',None)
         if va is not None:out['verticalAlign']={1:'top',3:'middle',4:'bottom'}.get(int(va),'middle')
+        out['autoFit']=tf.auto_size==MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     except Exception:pass
+    out.setdefault('listStyle','none');out.setdefault('lineSpacing',1.2);out.setdefault('paragraphSpacing',0.0);out.setdefault('indent',0.0);out.setdefault('autoFit',False)
     return out
 
 def common(shape,sw,sh,group_id=None):
-    return {'id':uid(),'x':pct(shape.left,sw),'y':pct(shape.top,sh),'width':max(.5,pct(shape.width,sw)),'height':max(.5,pct(shape.height,sh)),'rotation':float(getattr(shape,'rotation',0) or 0)%360,'opacity':1.0,'locked':False,'groupId':group_id}
+
+    try:xfrm=shape._element.spPr.xfrm;fh=xfrm.get('flipH') in ('1','true');fv=xfrm.get('flipV') in ('1','true')
+    except Exception:fh=fv=False
+    return {'id':uid(),'x':pct(shape.left,sw),'y':pct(shape.top,sh),'width':max(.5,pct(shape.width,sw)),'height':max(.5,pct(shape.height,sh)),'rotation':float(getattr(shape,'rotation',0) or 0)%360,'opacity':1.0,'locked':False,'groupId':group_id,'flipH':fh,'flipV':fv}
 
 def asset_from_picture(shape,outdeck):
     image=shape.image; blob=image.blob; ext=(getattr(image,'ext',None) or 'png').lower(); digest=hashlib.sha256(blob).hexdigest()[:24]; rel=f'.morrow-assets/{digest}.{ext}'; target=outdeck.parent/rel;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(blob) if not target.exists() else None
@@ -69,10 +89,13 @@ def picture_element(shape,sw,sh,outdeck,group_id=None):
     def crop(name):
         try:return max(0.0,min(.95,float(getattr(shape,name) or 0)))
         except:return 0.0
-    l,t,r,b=(crop('crop_left'),crop('crop_top'),crop('crop_right'),crop('crop_bottom')); fw=visw/max(.05,1-l-r); fh=vish/max(.05,1-t-b); expected=fw*SLIDE_ASPECT/(iw/ih if iw and ih else SLIDE_ASPECT)
+    l,t,r,b=(crop('crop_left'),crop('crop_top'),crop('crop_right'),crop('crop_bottom')); fw=visw/max(.05,1-l-r); fh=vish/max(.05,1-t-b); slide_aspect=float(sw)/float(sh) if sh else SLIDE_ASPECT;expected=fw*slide_aspect/(iw/ih if iw and ih else slide_aspect)
     if abs(expected-fh)>max(1.5,.08*max(expected,fh)):
-        fw=fh*(iw/ih if iw and ih else SLIDE_ASPECT)/SLIDE_ASPECT; expected=fh
-    return {'id':uid(),'type':'image','path':rel,'alt':getattr(shape,'name',''),'x':visx-fw*l,'y':visy-expected*t,'width':fw,'height':expected,'intrinsicWidth':iw,'intrinsicHeight':ih,'crop':{'left':l*100,'top':t*100,'right':r*100,'bottom':b*100},'rotation':float(getattr(shape,'rotation',0) or 0)%360,'opacity':1.0,'locked':False,'groupId':group_id}
+        fw=fh*(iw/ih if iw and ih else slide_aspect)/slide_aspect; expected=fh
+
+    try:xfrm=shape._element.spPr.xfrm;fh=xfrm.get('flipH') in ('1','true');fv=xfrm.get('flipV') in ('1','true')
+    except Exception:fh=fv=False
+    return {'id':uid(),'type':'image','path':rel,'alt':getattr(shape,'name',''),'x':visx-fw*l,'y':visy-expected*t,'width':fw,'height':expected,'intrinsicWidth':iw,'intrinsicHeight':ih,'crop':{'left':l*100,'top':t*100,'right':r*100,'bottom':b*100},'rotation':float(getattr(shape,'rotation',0) or 0)%360,'opacity':1.0,'locked':False,'groupId':group_id,'flipH':fh,'flipV':fv}
 
 def placeholder_role(shape):
     try:
@@ -99,6 +122,12 @@ def shape_kind(shape):
         if a==MSO_SHAPE.OVAL:return'ellipse'
         if a==MSO_SHAPE.ROUNDED_RECTANGLE:return'rounded-rect'
         if a==MSO_SHAPE.RECTANGLE:return'rect'
+        if a==MSO_SHAPE.ISOSCELES_TRIANGLE:return'triangle'
+        if a==MSO_SHAPE.DIAMOND:return'diamond'
+        if a in (MSO_SHAPE.PENTAGON,MSO_SHAPE.REGULAR_PENTAGON):return'pentagon'
+        if a==MSO_SHAPE.HEXAGON:return'hexagon'
+        if a==MSO_SHAPE.STAR_5_POINT:return'star'
+        if a==MSO_SHAPE.CHEVRON:return'chevron'
     except:pass
     return'rect'
 
@@ -125,6 +154,7 @@ def fallback_box(shape,sw,sh,label,group_id=None):
 def walk(shapes,sw,sh,outdeck,group_id=None):
     out=[]
     for shape in shapes:
+        if (getattr(shape,'name','') or '') in ('MorrowPresenter:footer','MorrowPresenter:slide-number'):continue
         try:stype=shape.shape_type
         except:continue
         if stype==MSO_SHAPE_TYPE.GROUP:
@@ -152,12 +182,24 @@ def notes(slide):
     try:return slide.notes_slide.notes_text_frame.text or ''
     except:return''
 
+def footer_from_prs(prs):
+    out={'text':'','showText':False,'showSlideNumber':False,'fontFamily':'Inter','fontSize':11.0,'color':'#666666'}
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            name=getattr(shape,'name','') or ''
+            if name=='MorrowPresenter:footer':
+                out['showText']=True;out['text']=getattr(shape,'text','') or '';st=first_text_style(shape);out['fontFamily']=st['fontFamily'];out['fontSize']=st['fontSize'];out['color']=st['color']
+            elif name=='MorrowPresenter:slide-number':out['showSlideNumber']=True
+        if out['showText'] or out['showSlideNumber']:break
+    return out
+
 def main():
     if len(sys.argv)!=3:raise SystemExit('usage: import-pptx.py input.pptx output.morrowdeck')
     source=Path(sys.argv[1]).resolve();outdeck=Path(sys.argv[2]).resolve();prs=Presentation(source);sw,sh=prs.slide_width,prs.slide_height;slides=[]
     for slide in prs.slides:
         slides.append({'id':uid(),'layout':'blank','background':slide_background(slide),'notes':notes(slide),'transition':{'type':'none','duration':.35},'elements':walk(slide.shapes,sw,sh,outdeck)})
     if not slides:slides=[{'id':uid(),'layout':'blank','background':'#ffffff','notes':'','transition':{'type':'none','duration':.35},'elements':[]}]
-    deck={'version':1,'title':source.stem,'selectedId':slides[0]['id'],'theme':{'name':'default','fontFamily':'Inter','titleFontFamily':'Inter','background':'#ffffff','text':'#202124','accent':'#2563eb'},'view':{'snapToObjects':True,'snapToGrid':False,'showGrid':False,'showGuides':True,'showElementLabels':False,'gridSize':2.5,'guideX':[50.0],'guideY':[50.0]},'slides':slides}
+    win=float(sw)/914400;hin=float(sh)/914400;ratio=win/hin if hin else SLIDE_ASPECT;preset='wide' if abs(ratio-16/9)<.02 else 'standard' if abs(ratio-4/3)<.02 else 'custom'
+    deck={'version':1,'title':source.stem,'selectedId':slides[0]['id'],'page':{'preset':preset,'width':win,'height':hin},'footer':footer_from_prs(prs),'theme':{'name':'default','fontFamily':'Inter','titleFontFamily':'Inter','background':'#ffffff','text':'#202124','accent':'#2563eb'},'view':{'snapToObjects':True,'snapToGrid':False,'showGrid':False,'showGuides':True,'showElementLabels':False,'gridSize':2.5,'guideX':[50.0],'guideY':[50.0]},'slides':slides}
     outdeck.parent.mkdir(parents=True,exist_ok=True);outdeck.write_text(json.dumps(deck,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(outdeck)
 if __name__=='__main__':main()

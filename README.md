@@ -26,6 +26,8 @@ morrow-presenter capabilities --json
 - `标题 + 正文`、`仅标题`、`章节页`、`空白`四种版式模板；模板只负责创建/重排文本框，不使用独立占位渲染层。
 - 新建、复制、删除、拖拽排序。
 - 每页背景色、演讲者备注。
+- 文稿尺寸支持 `16:9 宽屏` 与 `4:3 标准`，画布、放映、PDF/PPTX 都使用同一页面比例。
+- 全局页脚文字和幻灯片页码。
 - `none` / `fade` 基础切换效果。
 - 原生全屏放映；方向键、Space、PageUp/PageDown、Home/End、Esc。
 
@@ -35,7 +37,7 @@ morrow-presenter capabilities --json
 
 - 文本框；标题/正文也都是普通文本框，只通过 `role: title/body` 标记语义。
 - 图片（PNG/JPEG/GIF/WebP/HEIC/HEIF）。
-- 矩形、圆角矩形、椭圆、直线、箭头。
+- 矩形、圆角矩形、椭圆、直线、箭头、三角形、菱形、五边形、六边形、五角星、chevron。
 - 表格。
 - 自动连接符。
 
@@ -46,6 +48,7 @@ morrow-presenter capabilities --json
 - 四角缩放；图片始终等比；多对象/组合整体等比缩放。
 - 单对象和多对象/组合旋转。
 - 透明度、锁定。
+- 单对象可直接输入精确 `X/Y/W/H`；图片和形状支持水平/垂直翻转。
 - `⌘C / ⌘X / ⌘V`、`⌘D`、Delete。
 - 置顶 / 置底 / 上下移动一层。
 - 左/中/右、顶/中/底对齐；水平/垂直分布。
@@ -65,6 +68,7 @@ morrow-presenter capabilities --json
 ### 文本、形状和表格
 
 - 字体、字号、粗体、斜体、下划线、颜色、文本对齐。
+- 项目符号、自动编号、行距、段后距、段落缩进、文字自动缩小适应文本框。
 - 填充、无填充、描边、线宽。
 - 双击文本框/形状直接编辑文字；标题/正文文本框同样支持拖动、四角 resize、旋转、层级、对齐和组合。
 - 表格单元格双击编辑。
@@ -103,7 +107,7 @@ Mac App 顶栏可直接导出 PDF/PPTX；“打开”也可直接选择 `.pptx`�
 
 `export-pdf` 使用 ReportLab/Pillow，`export-pptx` 和 `import-pptx` 使用 python-pptx/Pillow，均由 `uv run --script` 按需解析依赖。首次执行可能需要下载依赖，之后使用 uv cache。
 
-目前 PPTX 重点覆盖文本框、基础形状、图片及裁切、表格、位置/尺寸、备注以及常见连接线。PowerPoint 中无法直接映射的复杂对象会尽量降级成普通占位 shape，而不是导致整份文件导入失败。SmartArt、图表等高级对象目前不是可编辑的原生 Morrow element；PPTX 中的动态 connector 回导时可能降级成普通 line。
+目前 PPTX 重点覆盖文本框、项目符号/编号和常用段落格式、常用形状、图片及裁切/翻转、表格、精确位置/尺寸、16:9/4:3 页面、页脚/页码、备注以及常见连接线。PowerPoint 中无法直接映射的复杂对象会尽量降级成普通占位 shape，而不是导致整份文件导入失败。SmartArt、图表等高级对象目前不是可编辑的原生 Morrow element；PPTX 中的动态 connector 回导时可能降级成普通 line。
 
 ## Shell / Agent 示例
 

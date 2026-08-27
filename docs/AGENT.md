@@ -32,6 +32,10 @@ morrow-presenter delete talk.morrowdeck 3
 morrow-presenter slide-style talk.morrowdeck 2 \
   --background '#f7f7f8' --notes 'Explain this' \
   --transition fade --transition-duration 0.3
+
+morrow-presenter page-size talk.morrowdeck wide
+morrow-presenter footer-set talk.morrowdeck \
+  --text 'Internal' --show-text --show-slide-number
 ```
 
 长正文/备注可使用 `--body-file -` / `--notes-file -`。版式命令会创建或重排 role 文本框；之后它们仍是普通自由对象。例如：
@@ -111,7 +115,12 @@ morrow-presenter element-update talk.morrowdeck 2 <id> --scale 1.15 --rotation 8
 morrow-presenter element-update talk.morrowdeck 2 <id> \
   --font-family Arial --font-size 26 --font-weight 700 \
   --italic --underline --align center \
+  --list-style bullet --line-spacing 1.3 --paragraph-spacing 6 --indent 12 --auto-fit \
   --color '#111111' --fill '#fff4cc' --stroke '#333333' --stroke-width 2
+
+# 精确几何与翻转
+morrow-presenter element-update talk.morrowdeck 2 <id> \
+  --x 12.5 --y 18 --width 36 --height 24 --flip-h
 
 morrow-presenter element-update talk.morrowdeck 2 <image-id> \
   --crop-left 8 --crop-right 12 --crop-top 4
