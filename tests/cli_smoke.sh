@@ -71,23 +71,20 @@ if images:
 print("CLI_SMOKE_OK")
 PY
 
-# Old single-image decks must normalize into elements[] instead of being stranded.
-if [[ -f "$SYSTEM_IMAGE" ]]; then
-  LEGACY="$TMP_DIR/legacy.morrowdeck"
-  mkdir -p "$TMP_DIR/.morrow-assets"
-  cp "$SYSTEM_IMAGE" "$TMP_DIR/.morrow-assets/legacy.jpg"
-  cat > "$LEGACY" <<'JSON'
-{"version":1,"title":"Legacy","selectedId":"s","slides":[{"id":"s","layout":"title-body","title":"t","body":"b","image":{"path":".morrow-assets/legacy.jpg","alt":"legacy","placement":"right","fit":"cover"}}]}
-JSON
-  "$CLI" get "$LEGACY" 1 --json > "$TMP_DIR/legacy.json"
-  python3 - "$TMP_DIR/legacy.json" <<'PY'
+# Canonical development format: every element must declare its type.
+UNTYPED="$TMP_DIR/untyped-element.morrowdeck"
+cp "$DECK" "$UNTYPED"
+python3 - "$UNTYPED" <<'PY'
 import json,sys
-slide=json.load(open(sys.argv[1]))
-assert "image" not in slide and "title" not in slide and "body" not in slide
-assert len(slide["elements"]) == 3
-roles={e.get("role"):e for e in slide["elements"] if e["type"]=="text"}
-assert roles["title"]["text"] == "t" and roles["body"]["text"] == "b"
-assert any(e["type"] == "image" for e in slide["elements"])
-print("LEGACY_MIGRATION_OK")
+p=sys.argv[1]
+d=json.load(open(p))
+d['slides'][0]['elements'].append({'path':'.morrow-assets/not-an-element.jpg'})
+open(p,'w').write(json.dumps(d,indent=2)+'\n')
 PY
+if "$CLI" validate "$UNTYPED" >/dev/null 2>&1; then
+  echo 'untyped element unexpectedly accepted' >&2
+  exit 1
 fi
+
+# Only generic element image operations are part of the CLI surface.
+"$CLI" capabilities --json | python3 -c 'import json,sys; ops=set(json.load(sys.stdin)["operations"]); required={"element-add-image","element-update","element-delete"}; assert required <= ops; print("CANONICAL_FORMAT_ONLY_OK")'

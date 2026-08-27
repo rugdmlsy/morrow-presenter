@@ -172,10 +172,6 @@ morrow-presenter present talk.morrowdeck --slide 2
 
 `export` 是 Morrow deck copy，并复制所有 asset；不要与 `export-pdf` / `export-pptx` 混淆。
 
-## Compatibility image commands
-
-`image-set`, `image-update`, `image-remove` 仍保留，作用于 slide 第一张 image。新 agent 工作流优先 generic `element-*`。
-
 ## GUI / CLI coexistence
 
 `.morrowdeck` 是 source of truth。App 打开文件后监测 modification time；CLI 写入后 GUI 自动 reload。已有路径的 GUI mutation 自动原子保存。

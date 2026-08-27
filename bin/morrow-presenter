@@ -265,8 +265,6 @@ def normalize_element(raw: object) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("slide element must be an object")
     kind = raw.get("type")
-    if kind is None and raw.get("path"):
-        kind = "image"
     if kind == "image":
         return normalize_image_element(raw)
     if kind == "text":
@@ -278,25 +276,6 @@ def normalize_element(raw: object) -> dict:
     if kind == "connector":
         return normalize_connector_element(raw)
     raise ValueError(f"unsupported element type: {kind!r}")
-
-
-def legacy_image_element(raw: object) -> dict | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError("slide.image must be an object")
-    migrated = dict(raw)
-    migrated["type"] = "image"
-    iw = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
-    ih = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
-    placement = raw.get("placement")
-    if "x" not in raw and placement in {"right", "left", "background", "full"}:
-        if placement == "right": width, x = 40.0, 55.0
-        elif placement == "left": width, x = 40.0, 5.0
-        else: width, x = 100.0, 0.0
-        height = image_height_for_width(width, iw, ih)
-        migrated.update({"x": x, "y": (100.0-height)/2.0, "width": width, "height": height})
-    return normalize_image_element(migrated)
 
 
 def expected_roles(layout: str) -> tuple[str, ...]:
@@ -386,16 +365,6 @@ def normalize(candidate: object) -> dict:
             if element["id"] in seen_elements: element["id"] = str(uuid.uuid4())
             seen_elements.add(element["id"]); elements.append(element)
         item={"id":sid,"layout":layout,"background":_string(raw.get("background"), "#202124" if layout=="section" else theme["background"]),"notes":_string(raw.get("notes")),"transition":normalize_transition(raw.get("transition")),"elements":elements}
-        legacy_title=raw.get("title") if isinstance(raw.get("title"), str) else None; legacy_body=raw.get("body") if isinstance(raw.get("body"), str) else None
-        if role_element(item,"title") is None and ((legacy_title not in (None,"")) or "title" in expected_roles(layout)): item["elements"].insert(0,role_template("title",layout,theme,legacy_title or ""))
-        if role_element(item,"body") is None and ((legacy_body not in (None,"")) or "body" in expected_roles(layout)): item["elements"].append(role_template("body",layout,theme,legacy_body or ""))
-        legacy = legacy_image_element(raw.get("image"))
-        if legacy is not None:
-            duplicate = any(e.get("type") == "image" and e.get("path") == legacy.get("path") and abs(e.get("x",0)-legacy.get("x",0)) < .001 and abs(e.get("y",0)-legacy.get("y",0)) < .001 for e in elements)
-            if not duplicate:
-                if legacy["id"] in seen_elements:
-                    legacy["id"] = str(uuid.uuid4())
-                elements.append(legacy)
         valid_ids = {e["id"] for e in item["elements"]}
         for e in item["elements"]:
             if e.get("type") == "connector":
@@ -534,12 +503,6 @@ def resolve_element(slide_obj: dict, ref: str) -> tuple[int, dict]:
     raise ValueError(f"unknown element reference: {ref}")
 
 
-def primary_image(slide_obj: dict) -> tuple[int, dict]:
-    for index, element in enumerate(slide_obj.get("elements", [])):
-        if element.get("type") == "image": return index, element
-    raise ValueError("slide has no image")
-
-
 def resolve_elements(slide_obj: dict, refs: list[str]) -> list[dict]:
     result=[]; seen=set()
     for ref in refs:
@@ -649,7 +612,7 @@ def capabilities() -> dict:
         "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),"themes":list(VALID_THEME_PRESETS),
         "features":["multi-object canvas","unified title/body text roles","text boxes","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","element labels","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
         "image_storage":f"relative files under {ASSET_DIR}/",
-        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","image-set","image-update","image-remove","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
+        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
         "agent_docs":str(Path(__file__).resolve().parents[1]/"docs"/"AGENT.md"),
     }
 
@@ -716,10 +679,6 @@ def parser() -> argparse.ArgumentParser:
     sp=subs.add_parser("element-ungroup"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
     sp=subs.add_parser("element-order"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); group=sp.add_mutually_exclusive_group(required=True); group.add_argument("--to-front",action="store_true"); group.add_argument("--to-back",action="store_true"); group.add_argument("--forward",action="store_true"); group.add_argument("--backward",action="store_true"); group.add_argument("--index",type=int); add_json(sp)
     sp=subs.add_parser("element-align"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("mode",choices=VALID_ALIGN_MODES); sp.add_argument("elements",nargs="+"); add_json(sp)
-    # Compatibility aliases for the old single-image surface: operate on the first image.
-    sp=subs.add_parser("image-set"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("image",type=Path); sp.add_argument("--x",type=float,default=55.0); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float,default=DEFAULT_IMAGE_WIDTH); sp.add_argument("--alt",default=""); add_json(sp)
-    sp=subs.add_parser("image-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--x",type=float); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--alt"); add_json(sp)
-    sp=subs.add_parser("image-remove"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
     for name in ("open","present"):
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("--slide"); add_json(sp)
     sp=subs.add_parser("export"); sp.add_argument("path",type=Path); sp.add_argument("output",type=Path); add_json(sp)
@@ -1051,20 +1010,6 @@ def main() -> int:
             elements.insert(target,e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":target+1,"element":e,"message":"Reordered element"},args.json)
         elif cmd=="element-align":
             sidx,item=resolve_slide(deck,args.slide); updated=align_elements(item,args.elements,args.mode); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"mode":args.mode,"elements":updated,"message":f"Aligned {len(updated)} elements"},args.json)
-        elif cmd=="image-set":
-            sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt)
-            try: oldidx,_=primary_image(item); item["elements"][oldidx]=e; pos=oldidx+1
-            except ValueError: item["elements"].append(e); pos=len(item["elements"])
-            write_deck(path,deck); emit({"ok":True,"position":sidx+1,"elementPosition":pos,"image":e,"message":f"Set primary image on slide {sidx+1}"},args.json)
-        elif cmd=="image-update":
-            sidx,item=resolve_slide(deck,args.slide); eidx,e=primary_image(item)
-            # Reuse generic update by supplying missing generic attributes expected by helper.
-            for attr in ("height","text","shape","font_family","font_size","font_weight","italic","underline","color","align","vertical_align","fill","stroke","stroke_width","locked"):
-                if not hasattr(args,attr): setattr(args,attr,None)
-            if not apply_element_update(e,args): raise ValueError("image-update requires at least one update option")
-            item["elements"][eidx]=normalize_image_element(e); write_deck(path,deck); emit({"ok":True,"position":sidx+1,"image":item["elements"][eidx],"message":f"Updated primary image on slide {sidx+1}"},args.json)
-        elif cmd=="image-remove":
-            sidx,item=resolve_slide(deck,args.slide); eidx,e=primary_image(item); item["elements"].pop(eidx); write_deck(path,deck); emit({"ok":True,"position":sidx+1,"removed":e,"message":f"Removed primary image from slide {sidx+1}"},args.json)
         elif cmd=="open":
             if args.slide: resolve_slide(deck,args.slide)
             launch(path,False,args.slide); emit({"ok":True,"path":str(path),"message":f"Opened {path}"},args.json)

@@ -83,8 +83,7 @@ function normalizeConnectorElement(candidate){const c=commonElement(candidate,10
 
 function normalizeElement(candidate) {
   if (!candidate || typeof candidate !== 'object') throw new Error('Invalid slide element');
-  let type = candidate.type;
-  if (!type && candidate.path) type = 'image';
+  const type = candidate.type;
   if (type === 'image') {
     const path = safeAssetPath(candidate.path);
     const iw = Math.max(1, numberOr(candidate.intrinsicWidth, 16)); const ih = Math.max(1, numberOr(candidate.intrinsicHeight, 9));
@@ -104,15 +103,6 @@ function normalizeElement(candidate) {
   if(type==='table')return normalizeTableElement(candidate);
   if(type==='connector')return normalizeConnectorElement(candidate);
   throw new Error(`Unsupported element type: ${type}`);
-}
-function migrateLegacyImage(candidate) {
-  if (!candidate) return null;
-  const image = { ...candidate, type:'image' }; const iw = Math.max(1,numberOr(image.intrinsicWidth,16)); const ih=Math.max(1,numberOr(image.intrinsicHeight,9));
-  if (image.x == null && ['right','left','background','full'].includes(image.placement)) {
-    let width=100,x=0; if (image.placement==='right') {width=40;x=55;} else if (image.placement==='left') {width=40;x=5;}
-    const height=imageHeightForWidth(width,iw,ih); Object.assign(image,{x,y:(100-height)/2,width,height});
-  }
-  return normalizeElement(image);
 }
 function roleTemplate(role,layout,theme,text=''){
   const title=role==='title', section=layout==='section';
@@ -146,10 +136,6 @@ function normalizeDeck(candidate) {
     const layout=VALID_LAYOUTS.has(raw.layout)?raw.layout:'title-body',seenElements=new Set(),elements=[],seenRoles=new Set();
     for(const input of Array.isArray(raw.elements)?raw.elements:[]){const e=normalizeElement(input);if(e.type==='text'&&e.role){if(seenRoles.has(e.role))e.role=null;else seenRoles.add(e.role);}if(seenElements.has(e.id))e.id=uid();seenElements.add(e.id);elements.push(e);}
     const slide={id,layout,background:typeof raw.background==='string'?raw.background:(layout==='section'?'#202124':theme.background),notes:typeof raw.notes==='string'?raw.notes:'',transition:normalizeTransition(raw.transition),elements};
-    const legacyTitle=typeof raw.title==='string'?raw.title:undefined,legacyBody=typeof raw.body==='string'?raw.body:undefined;
-    if(!roleElement(slide,'title')&&((legacyTitle!==undefined&&legacyTitle!=='')||expectedRoles(layout).includes('title')))slide.elements.unshift(roleTemplate('title',layout,theme,legacyTitle||''));
-    if(!roleElement(slide,'body')&&((legacyBody!==undefined&&legacyBody!=='')||expectedRoles(layout).includes('body')))slide.elements.push(roleTemplate('body',layout,theme,legacyBody||''));
-    const legacy=migrateLegacyImage(raw.image);if(legacy&&!slide.elements.some(e=>e.type==='image'&&e.path===legacy.path&&Math.abs(e.x-legacy.x)<.001&&Math.abs(e.y-legacy.y)<.001)){if(seenElements.has(legacy.id))legacy.id=uid();slide.elements.push(legacy);}
     const validIds=new Set(slide.elements.map(e=>e.id));for(const e of slide.elements)if(e.type==='connector')for(const endpoint of [e.from,e.to])if(endpoint.elementId&&!validIds.has(endpoint.elementId)){endpoint.elementId=null;endpoint.x=10;endpoint.y=10;}
     return slide;
   });

@@ -470,10 +470,6 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
 
         var paths = Set<String>()
         for slide in slides {
-            // Legacy single-image decks are still portable during migration.
-            if let image = slide["image"] as? [String: Any], let path = image["path"] as? String {
-                paths.insert(path)
-            }
             if let elements = slide["elements"] as? [[String: Any]] {
                 for element in elements where (element["type"] as? String) == "image" {
                     if let path = element["path"] as? String { paths.insert(path) }

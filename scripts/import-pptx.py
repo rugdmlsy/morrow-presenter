@@ -156,8 +156,8 @@ def main():
     if len(sys.argv)!=3:raise SystemExit('usage: import-pptx.py input.pptx output.morrowdeck')
     source=Path(sys.argv[1]).resolve();outdeck=Path(sys.argv[2]).resolve();prs=Presentation(source);sw,sh=prs.slide_width,prs.slide_height;slides=[]
     for slide in prs.slides:
-        slides.append({'id':uid(),'layout':'blank','title':'','body':'','background':slide_background(slide),'notes':notes(slide),'transition':{'type':'none','duration':.35},'elements':walk(slide.shapes,sw,sh,outdeck)})
-    if not slides:slides=[{'id':uid(),'layout':'blank','title':'','body':'','background':'#ffffff','notes':'','transition':{'type':'none','duration':.35},'elements':[]}]
+        slides.append({'id':uid(),'layout':'blank','background':slide_background(slide),'notes':notes(slide),'transition':{'type':'none','duration':.35},'elements':walk(slide.shapes,sw,sh,outdeck)})
+    if not slides:slides=[{'id':uid(),'layout':'blank','background':'#ffffff','notes':'','transition':{'type':'none','duration':.35},'elements':[]}]
     deck={'version':1,'title':source.stem,'selectedId':slides[0]['id'],'theme':{'name':'default','fontFamily':'Inter','titleFontFamily':'Inter','background':'#ffffff','text':'#202124','accent':'#2563eb'},'view':{'snapToObjects':True,'snapToGrid':False,'showGrid':False,'showGuides':True,'showElementLabels':False,'gridSize':2.5,'guideX':[50.0],'guideY':[50.0]},'slides':slides}
     outdeck.parent.mkdir(parents=True,exist_ok=True);outdeck.write_text(json.dumps(deck,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');print(outdeck)
 if __name__=='__main__':main()

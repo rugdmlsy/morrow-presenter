@@ -1,6 +1,6 @@
 # `.morrowdeck` format
 
-`.morrowdeck` 是 UTF-8 JSON。Version 1 保持可读、可 diff；旧 deck 在 normalize 时自动补齐新字段。
+`.morrowdeck` 是 UTF-8 JSON。当前开发阶段只维护这一套规范化格式；Version 1 保持可读、可 diff。
 
 ```json
 {
@@ -65,7 +65,7 @@
 ## Slide fields
 
 - `layout`: `title-body`, `title`, `section`, `blank`。它是版式模板提示，用于创建/重排 role 文本框，不是独立文字渲染层。
-- 标题/正文不再是 slide 字段，而是 `elements[]` 中的普通 `text` element。旧文件中的 slide-level `title` / `body` 仅在读取时兼容，并自动迁移。
+- 标题/正文不是 slide 字段，而是 `elements[]` 中带 `role: title/body` 的普通 `text` element。
 - `background`: CSS color string。
 - `notes`: 演讲者备注。
 - `transition.type`: `none` / `fade`。
@@ -160,7 +160,7 @@ Anchors: `auto`, `top`, `right`, `bottom`, `left`, `center`。`arrow`: `none`, `
 
 图片不是 base64。`element-add-image` 将已有图片复制到 sibling `.morrow-assets/`，使用 SHA-256 前缀文件名去重。支持 PNG/JPEG/GIF/WebP/HEIC/HEIF。
 
-`morrow-presenter export` 和 Mac App Save As 会复制所有引用 asset。旧 `slides[].image` 会自动迁移成一个 `type=image` element。
+`morrow-presenter export` 和 Mac App Save As 会复制所有 `type=image` element 引用的 asset。
 
 ## Interchange
 
