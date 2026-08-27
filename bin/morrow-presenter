@@ -20,12 +20,15 @@ import uuid
 
 VERSION = 1
 VALID_LAYOUTS = ("title-body", "title", "section", "blank")
-VALID_ELEMENT_TYPES = ("text", "shape", "image")
+VALID_ELEMENT_TYPES = ("text", "shape", "image", "table", "connector")
 VALID_SHAPES = ("rect", "rounded-rect", "ellipse", "line", "arrow")
 VALID_ALIGN = ("left", "center", "right")
 VALID_VALIGN = ("top", "middle", "bottom")
 VALID_TRANSITIONS = ("none", "fade")
 VALID_ALIGN_MODES = ("left", "center", "right", "top", "middle", "bottom", "distribute-h", "distribute-v")
+VALID_CONNECTOR_ARROWS = ("none", "end", "both")
+VALID_CONNECTOR_ANCHORS = ("auto", "top", "right", "bottom", "left", "center")
+VALID_THEME_PRESETS = ("default", "dark", "warm", "blue")
 SLIDE_ASPECT = 16 / 9
 DEFAULT_IMAGE_WIDTH = 40.0
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
@@ -100,6 +103,7 @@ def element_common(raw: dict, *, default_width: float, default_height: float) ->
         "rotation": _number(raw.get("rotation"), 0.0) % 360.0,
         "opacity": _clamp(_number(raw.get("opacity"), 1.0), 0.0, 1.0),
         "locked": _bool(raw.get("locked"), False),
+        "groupId": raw.get("groupId") if isinstance(raw.get("groupId"), str) and raw.get("groupId") else None,
     }
 
 
@@ -121,7 +125,7 @@ def normalize_image_element(raw: object) -> dict:
         "x": common["x"], "y": common["y"], "width": width, "height": height,
         "intrinsicWidth": iw, "intrinsicHeight": ih,
         "crop": normalize_crop(raw.get("crop")),
-        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
     }
 
 
@@ -148,7 +152,7 @@ def normalize_text_element(raw: object) -> dict:
         "id": common["id"], "type": "text",
         "text": _string(raw.get("text")),
         "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
-        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
         "fill": _string(raw.get("fill"), "transparent"),
         "stroke": _string(raw.get("stroke"), "transparent"),
         "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 0.0), 0.0, 20.0),
@@ -166,11 +170,91 @@ def normalize_shape_element(raw: object) -> dict:
         "id": common["id"], "type": "shape", "shape": shape,
         "text": _string(raw.get("text")),
         "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
-        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
         "fill": _string(raw.get("fill"), "#e8e8e4"),
         "stroke": _string(raw.get("stroke"), "#4b4d50"),
         "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 1.5), 0.0, 20.0),
         **normalize_text_style({**raw, "fontSize": raw.get("fontSize", 20.0), "verticalAlign": raw.get("verticalAlign", "middle"), "align": raw.get("align", "center")}),
+    }
+
+
+def normalize_table_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("table element must be an object")
+    rows = max(1, min(50, int(_number(raw.get("rows"), 3))))
+    cols = max(1, min(30, int(_number(raw.get("cols"), 3))))
+    source = raw.get("cells") if isinstance(raw.get("cells"), list) else []
+    cells = []
+    for r in range(rows):
+        row = source[r] if r < len(source) and isinstance(source[r], list) else []
+        cells.append([_string(row[c]) if c < len(row) else "" for c in range(cols)])
+    common = element_common(raw, default_width=55.0, default_height=max(12.0, rows * 8.0))
+    style = normalize_text_style({**raw, "fontSize": raw.get("fontSize", 18.0), "align": raw.get("align", "left"), "verticalAlign": raw.get("verticalAlign", "middle")})
+    return {
+        "id": common["id"], "type": "table", "rows": rows, "cols": cols, "cells": cells,
+        "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "fill": _string(raw.get("fill"), "#ffffff"), "headerFill": _string(raw.get("headerFill"), "#e8e8e4"),
+        "stroke": _string(raw.get("stroke"), "#777777"), "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 1.0), 0.0, 20.0),
+        **style,
+    }
+
+
+def normalize_connector_endpoint(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    element_id = raw.get("elementId") if isinstance(raw.get("elementId"), str) and raw.get("elementId") else None
+    anchor = raw.get("anchor") if raw.get("anchor") in VALID_CONNECTOR_ANCHORS else "auto"
+    result = {"elementId": element_id, "anchor": anchor}
+    if element_id is None:
+        result["x"] = _clamp(_number(raw.get("x"), 10.0), -300.0, 300.0)
+        result["y"] = _clamp(_number(raw.get("y"), 10.0), -300.0, 300.0)
+    return result
+
+
+def normalize_connector_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("connector element must be an object")
+    common = element_common(raw, default_width=20.0, default_height=10.0)
+    return {
+        "id": common["id"], "type": "connector",
+        "from": normalize_connector_endpoint(raw.get("from")), "to": normalize_connector_endpoint(raw.get("to")),
+        "arrow": raw.get("arrow") if raw.get("arrow") in VALID_CONNECTOR_ARROWS else "end",
+        "stroke": _string(raw.get("stroke"), "#4b4d50"), "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 2.0), 0.5, 20.0),
+        "dash": _bool(raw.get("dash"), False), "opacity": common["opacity"], "locked": common["locked"], "groupId": common["groupId"],
+        "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"], "rotation": 0.0,
+    }
+
+
+THEME_PRESETS = {
+    "default": {"name":"default","fontFamily":"Inter","titleFontFamily":"Inter","background":"#ffffff","text":"#202124","accent":"#2563eb"},
+    "dark": {"name":"dark","fontFamily":"Inter","titleFontFamily":"Inter","background":"#202124","text":"#f5f5f4","accent":"#60a5fa"},
+    "warm": {"name":"warm","fontFamily":"Georgia","titleFontFamily":"Georgia","background":"#f7f0e5","text":"#362f2a","accent":"#a44a3f"},
+    "blue": {"name":"blue","fontFamily":"Inter","titleFontFamily":"Inter","background":"#f5f8ff","text":"#14213d","accent":"#2563eb"},
+}
+
+
+def normalize_theme(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    preset = raw.get("name") if raw.get("name") in THEME_PRESETS else "default"
+    base = dict(THEME_PRESETS[preset])
+    for key in ("fontFamily", "titleFontFamily", "background", "text", "accent"):
+        if isinstance(raw.get(key), str) and raw.get(key): base[key] = raw[key]
+    return base
+
+
+def normalize_view(raw: object) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    def nums(name, default):
+        value = raw.get(name)
+        if not isinstance(value, list): return list(default)
+        return [_clamp(_number(v, 50.0), -300.0, 300.0) for v in value[:20]]
+    return {
+        "snapToObjects": _bool(raw.get("snapToObjects"), True),
+        "snapToGrid": _bool(raw.get("snapToGrid"), False),
+        "showGrid": _bool(raw.get("showGrid"), False),
+        "showGuides": _bool(raw.get("showGuides"), True),
+        "gridSize": _clamp(_number(raw.get("gridSize"), 2.5), 0.25, 25.0),
+        "guideX": nums("guideX", [50.0]), "guideY": nums("guideY", [50.0]),
     }
 
 
@@ -186,6 +270,10 @@ def normalize_element(raw: object) -> dict:
         return normalize_text_element(raw)
     if kind == "shape":
         return normalize_shape_element(raw)
+    if kind == "table":
+        return normalize_table_element(raw)
+    if kind == "connector":
+        return normalize_connector_element(raw)
     raise ValueError(f"unsupported element type: {kind!r}")
 
 
@@ -218,7 +306,7 @@ def slide(title: str = "", body: str = "", layout: str = "title-body") -> dict:
 
 def new_deck(title: str = "Untitled deck") -> dict:
     first = slide("", "", "title")
-    return {"version": VERSION, "title": title, "selectedId": first["id"], "slides": [first]}
+    return {"version": VERSION, "title": title, "selectedId": first["id"], "theme": normalize_theme(None), "view": normalize_view(None), "slides": [first]}
 
 
 def normalize(candidate: object) -> dict:
@@ -254,6 +342,13 @@ def normalize(candidate: object) -> dict:
                     legacy["id"] = str(uuid.uuid4())
                 elements.append(legacy)
         default_background = "#202124" if layout == "section" else "#ffffff"
+        valid_ids = {e["id"] for e in elements}
+        for e in elements:
+            if e.get("type") == "connector":
+                for endpoint in (e["from"], e["to"]):
+                    if endpoint.get("elementId") not in valid_ids:
+                        endpoint["elementId"] = None
+                        endpoint.setdefault("x", 10.0); endpoint.setdefault("y", 10.0)
         slides.append({
             "id": sid,
             "layout": layout,
@@ -268,7 +363,7 @@ def normalize(candidate: object) -> dict:
     if selected not in seen_slides:
         selected = slides[0]["id"]
     title = candidate.get("title") if isinstance(candidate.get("title"), str) and candidate.get("title").strip() else "Untitled deck"
-    return {"version": VERSION, "title": title, "selectedId": selected, "slides": slides}
+    return {"version": VERSION, "title": title, "selectedId": selected, "theme": normalize_theme(candidate.get("theme")), "view": normalize_view(candidate.get("view")), "slides": slides}
 
 
 def read_deck(path: Path) -> dict:
@@ -393,6 +488,26 @@ def primary_image(slide_obj: dict) -> tuple[int, dict]:
     raise ValueError("slide has no image")
 
 
+def resolve_elements(slide_obj: dict, refs: list[str]) -> list[dict]:
+    result=[]; seen=set()
+    for ref in refs:
+        _, element=resolve_element(slide_obj,ref)
+        if element["id"] not in seen: result.append(element); seen.add(element["id"])
+    return result
+
+
+def remap_elements(elements: list[dict]) -> list[dict]:
+    copies=copy.deepcopy(elements); idmap={e["id"]:str(uuid.uuid4()) for e in copies}; groupmap={}
+    for e in copies:
+        old=e["id"]; e["id"]=idmap[old]
+        if e.get("groupId"):
+            groupmap.setdefault(e["groupId"],str(uuid.uuid4())); e["groupId"]=groupmap[e["groupId"]]
+        if e.get("type")=="connector":
+            for endpoint in (e["from"],e["to"]):
+                if endpoint.get("elementId") in idmap: endpoint["elementId"]=idmap[endpoint["elementId"]]
+    return copies
+
+
 def body_value(args: argparse.Namespace) -> str | None:
     body = getattr(args, "body", None)
     body_file = getattr(args, "body_file", None)
@@ -446,65 +561,43 @@ def image_schema() -> dict:
 
 def schema() -> dict:
     common = {
-        "id": {"type": "string"},
-        "x": {"type": "number"}, "y": {"type": "number"},
-        "width": {"type": "number", "exclusiveMinimum": 0},
-        "height": {"type": "number", "exclusiveMinimum": 0},
-        "rotation": {"type": "number"},
-        "opacity": {"type": "number", "minimum": 0, "maximum": 1},
-        "locked": {"type": "boolean"},
+        "id":{"type":"string"}, "x":{"type":"number"}, "y":{"type":"number"},
+        "width":{"type":"number","exclusiveMinimum":0}, "height":{"type":"number","exclusiveMinimum":0},
+        "rotation":{"type":"number"}, "opacity":{"type":"number","minimum":0,"maximum":1},
+        "locked":{"type":"boolean"}, "groupId":{"type":["string","null"]},
     }
     text_style = {
-        "text": {"type": "string"}, "fontFamily": {"type": "string"},
-        "fontSize": {"type": "number"}, "fontWeight": {"type": "integer"},
-        "italic": {"type": "boolean"}, "underline": {"type": "boolean"},
-        "color": {"type": "string"}, "align": {"enum": list(VALID_ALIGN)},
-        "verticalAlign": {"enum": list(VALID_VALIGN)}, "fill": {"type": "string"},
-        "stroke": {"type": "string"}, "strokeWidth": {"type": "number"},
+        "fontFamily":{"type":"string"}, "fontSize":{"type":"number"}, "fontWeight":{"type":"integer"},
+        "italic":{"type":"boolean"}, "underline":{"type":"boolean"}, "color":{"type":"string"},
+        "align":{"enum":list(VALID_ALIGN)}, "verticalAlign":{"enum":list(VALID_VALIGN)},
     }
-    text_element = {
-        "type": "object",
-        "required": ["id", "type", "text", "x", "y", "width", "height"],
-        "properties": {**common, "type": {"const": "text"}, **text_style},
-    }
-    shape_element = {
-        "type": "object",
-        "required": ["id", "type", "shape", "x", "y", "width", "height"],
-        "properties": {**common, "type": {"const": "shape"}, "shape": {"enum": list(VALID_SHAPES)}, **text_style},
-    }
-    slide_schema = {
-        "type": "object",
-        "required": ["id", "layout", "title", "body", "background", "notes", "transition", "elements"],
-        "properties": {
-            "id": {"type": "string"}, "layout": {"enum": list(VALID_LAYOUTS)},
-            "title": {"type": "string"}, "body": {"type": "string"},
-            "background": {"type": "string"}, "notes": {"type": "string"},
-            "transition": {
-                "type": "object", "required": ["type", "duration"],
-                "properties": {"type": {"enum": list(VALID_TRANSITIONS)}, "duration": {"type": "number"}},
-            },
-            "elements": {"type": "array", "items": {"oneOf": [text_element, shape_element, image_schema()]}},
-        },
-    }
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Morrow Presenter deck", "type": "object",
-        "required": ["version", "title", "slides"],
-        "properties": {
-            "version": {"const": VERSION}, "title": {"type": "string"},
-            "selectedId": {"type": "string"},
-            "slides": {"type": "array", "minItems": 1, "items": slide_schema},
-        },
-    }
+    text_element={"type":"object","required":["id","type","text","x","y","width","height"],"properties":{**common,"type":{"const":"text"},"text":{"type":"string"},"fill":{"type":"string"},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},**text_style}}
+    shape_element={"type":"object","required":["id","type","shape","x","y","width","height"],"properties":{**common,"type":{"const":"shape"},"shape":{"enum":list(VALID_SHAPES)},"text":{"type":"string"},"fill":{"type":"string"},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},**text_style}}
+    table_element={"type":"object","required":["id","type","rows","cols","cells","x","y","width","height"],"properties":{**common,"type":{"const":"table"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1},"cells":{"type":"array"},"fill":{"type":"string"},"headerFill":{"type":"string"},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},**text_style}}
+    endpoint={"type":"object","properties":{"elementId":{"type":["string","null"]},"anchor":{"enum":list(VALID_CONNECTOR_ANCHORS)},"x":{"type":"number"},"y":{"type":"number"}}}
+    connector_element={"type":"object","required":["id","type","from","to","arrow","stroke","strokeWidth"],"properties":{**common,"type":{"const":"connector"},"from":endpoint,"to":endpoint,"arrow":{"enum":list(VALID_CONNECTOR_ARROWS)},"stroke":{"type":"string"},"strokeWidth":{"type":"number"},"dash":{"type":"boolean"}}}
+    slide_schema={"type":"object","required":["id","layout","title","body","background","notes","transition","elements"],"properties":{
+        "id":{"type":"string"},"layout":{"enum":list(VALID_LAYOUTS)},"title":{"type":"string"},"body":{"type":"string"},"background":{"type":"string"},"notes":{"type":"string"},
+        "transition":{"type":"object","required":["type","duration"],"properties":{"type":{"enum":list(VALID_TRANSITIONS)},"duration":{"type":"number"}}},
+        "elements":{"type":"array","items":{"oneOf":[text_element,shape_element,image_schema(),table_element,connector_element]}},
+    }}
+    theme_schema={"type":"object","required":["name","fontFamily","titleFontFamily","background","text","accent"],"properties":{k:{"type":"string"} for k in ("name","fontFamily","titleFontFamily","background","text","accent")}}
+    view_schema={"type":"object","required":["snapToObjects","snapToGrid","showGrid","showGuides","gridSize","guideX","guideY"],"properties":{
+        "snapToObjects":{"type":"boolean"},"snapToGrid":{"type":"boolean"},"showGrid":{"type":"boolean"},"showGuides":{"type":"boolean"},"gridSize":{"type":"number"},"guideX":{"type":"array","items":{"type":"number"}},"guideY":{"type":"array","items":{"type":"number"}},
+    }}
+    return {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Morrow Presenter deck","type":"object","required":["version","title","theme","view","slides"],"properties":{
+        "version":{"const":VERSION},"title":{"type":"string"},"selectedId":{"type":"string"},"theme":theme_schema,"view":view_schema,"slides":{"type":"array","minItems":1,"items":slide_schema},
+    }}
+
 
 def capabilities() -> dict:
     return {
         "name":"Morrow Presenter","cli":"morrow-presenter","deck_format":"morrowdeck-json-v1","shell_first":True,"requires_mcp":False,
         "slide_refs":"1-based position or stable slide id","element_refs":"1-based position or stable element id","layouts":list(VALID_LAYOUTS),
-        "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),
-        "features":["multi-object canvas","text boxes","basic shapes","multiple images","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
+        "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),"themes":list(VALID_THEME_PRESETS),
+        "features":["multi-object canvas","text boxes","basic shapes","multiple images","tables","auto connectors","groups","snap to objects","snap to grid","guides","themes","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
         "image_storage":f"relative files under {ASSET_DIR}/",
-        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","elements","element-get","element-add-text","element-add-shape","element-add-image","element-update","element-delete","element-duplicate","element-order","element-align","image-set","image-update","image-remove","open","present","export","schema","capabilities"],
+        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","theme","theme-set","view-settings","elements","element-get","element-add-text","element-add-shape","element-add-image","element-add-table","element-add-connector","element-update","table-set","table-resize","table-row-add","table-row-delete","table-col-add","table-col-delete","element-delete","element-duplicate","element-group","element-ungroup","element-order","element-align","image-set","image-update","image-remove","open","present","export","export-pdf","export-pptx","import-pptx","schema","capabilities"],
         "agent_docs":str(Path(__file__).resolve().parents[1]/"docs"/"AGENT.md"),
     }
 
@@ -539,6 +632,7 @@ def parser() -> argparse.ArgumentParser:
     sp=subs.add_parser("capabilities"); add_json(sp)
     sp=subs.add_parser("schema"); add_json(sp)
     sp=subs.add_parser("new"); sp.add_argument("path",type=Path); sp.add_argument("--title",default="Untitled deck"); sp.add_argument("--force",action="store_true"); add_json(sp)
+    sp=subs.add_parser("import-pptx"); sp.add_argument("input",type=Path); sp.add_argument("output",type=Path); sp.add_argument("--force",action="store_true"); add_json(sp)
     for name in ("validate","info","slides"):
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); add_json(sp)
     sp=subs.add_parser("get"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
@@ -549,14 +643,25 @@ def parser() -> argparse.ArgumentParser:
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
     sp=subs.add_parser("move"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--to",type=int,required=True); add_json(sp)
     sp=subs.add_parser("slide-style"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--background"); add_notes_options(sp); sp.add_argument("--transition",choices=VALID_TRANSITIONS); sp.add_argument("--transition-duration",type=float); add_json(sp)
+    sp=subs.add_parser("theme"); sp.add_argument("path",type=Path); add_json(sp)
+    sp=subs.add_parser("theme-set"); sp.add_argument("path",type=Path); sp.add_argument("preset",choices=VALID_THEME_PRESETS); sp.add_argument("--apply-all",action="store_true"); add_json(sp)
+    sp=subs.add_parser("view-settings"); sp.add_argument("path",type=Path); sp.add_argument("--snap-to-objects",dest="snap_to_objects",action="store_const",const=True); sp.add_argument("--no-snap-to-objects",dest="snap_to_objects",action="store_const",const=False); sp.add_argument("--snap-to-grid",dest="snap_to_grid",action="store_const",const=True); sp.add_argument("--no-snap-to-grid",dest="snap_to_grid",action="store_const",const=False); sp.add_argument("--show-grid",dest="show_grid",action="store_const",const=True); sp.add_argument("--hide-grid",dest="show_grid",action="store_const",const=False); sp.add_argument("--show-guides",dest="show_guides",action="store_const",const=True); sp.add_argument("--hide-guides",dest="show_guides",action="store_const",const=False); sp.add_argument("--grid-size",type=float); sp.add_argument("--guide-x",type=float,action="append"); sp.add_argument("--guide-y",type=float,action="append"); sp.add_argument("--clear-guides",action="store_true"); add_json(sp)
     sp=subs.add_parser("elements"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
     sp=subs.add_parser("element-get"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
     sp=subs.add_parser("element-add-text"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("text",nargs="?",default="Text"); add_geometry(sp,defaults=True); add_text_style(sp,defaults=True); sp.add_argument("--fill",default="transparent"); sp.add_argument("--stroke",default="transparent"); sp.add_argument("--stroke-width",type=float,default=0.0); add_json(sp)
     sp=subs.add_parser("element-add-shape"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--shape",choices=VALID_SHAPES,default="rect"); sp.add_argument("--text",default=""); add_geometry(sp,defaults=True); add_text_style(sp,defaults=True); sp.add_argument("--fill",default="#e8e8e4"); sp.add_argument("--stroke",default="#4b4d50"); sp.add_argument("--stroke-width",type=float,default=1.5); add_json(sp)
     sp=subs.add_parser("element-add-image"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("image",type=Path); sp.add_argument("--x",type=float,default=55.0); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float,default=DEFAULT_IMAGE_WIDTH); sp.add_argument("--alt",default=""); add_json(sp)
-    sp=subs.add_parser("element-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_geometry(sp); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--text"); sp.add_argument("--alt"); sp.add_argument("--shape",choices=VALID_SHAPES); add_text_style(sp); sp.add_argument("--fill"); sp.add_argument("--stroke"); sp.add_argument("--stroke-width",type=float); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--lock",dest="locked",action="store_const",const=True); sp.add_argument("--unlock",dest="locked",action="store_const",const=False); add_json(sp)
+    sp=subs.add_parser("element-add-table"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--rows",type=int,default=3); sp.add_argument("--cols",type=int,default=3); sp.add_argument("--cells-json"); add_geometry(sp,defaults=True); sp.add_argument("--font-family",default="Inter"); sp.add_argument("--font-size",type=float,default=18.0); sp.add_argument("--color",default="#202124"); sp.add_argument("--fill",default="#ffffff"); sp.add_argument("--header-fill",default="#e8e8e4"); sp.add_argument("--stroke",default="#777777"); sp.add_argument("--stroke-width",type=float,default=1.0); add_json(sp)
+    sp=subs.add_parser("element-add-connector"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("from_element"); sp.add_argument("to_element"); sp.add_argument("--from-anchor",choices=VALID_CONNECTOR_ANCHORS,default="auto"); sp.add_argument("--to-anchor",choices=VALID_CONNECTOR_ANCHORS,default="auto"); sp.add_argument("--arrow",choices=VALID_CONNECTOR_ARROWS,default="end"); sp.add_argument("--stroke",default="#4b4d50"); sp.add_argument("--stroke-width",type=float,default=2.0); sp.add_argument("--dash",action="store_true"); add_json(sp)
+    sp=subs.add_parser("element-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_geometry(sp); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--text"); sp.add_argument("--alt"); sp.add_argument("--shape",choices=VALID_SHAPES); add_text_style(sp); sp.add_argument("--fill"); sp.add_argument("--header-fill"); sp.add_argument("--stroke"); sp.add_argument("--stroke-width",type=float); sp.add_argument("--arrow",choices=VALID_CONNECTOR_ARROWS); sp.add_argument("--dash",dest="dash",action="store_const",const=True); sp.add_argument("--solid",dest="dash",action="store_const",const=False); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--lock",dest="locked",action="store_const",const=True); sp.add_argument("--unlock",dest="locked",action="store_const",const=False); add_json(sp)
     for name in ("element-delete","element-duplicate"):
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
+    sp=subs.add_parser("table-set"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("row",type=int); sp.add_argument("col",type=int); sp.add_argument("value"); add_json(sp)
+    sp=subs.add_parser("table-resize"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("--rows",type=int); sp.add_argument("--cols",type=int); add_json(sp)
+    for name in ("table-row-add","table-row-delete","table-col-add","table-col-delete"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); sp.add_argument("--at",type=int); add_json(sp)
+    sp=subs.add_parser("element-group"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("elements",nargs="+"); add_json(sp)
+    sp=subs.add_parser("element-ungroup"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
     sp=subs.add_parser("element-order"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); group=sp.add_mutually_exclusive_group(required=True); group.add_argument("--to-front",action="store_true"); group.add_argument("--to-back",action="store_true"); group.add_argument("--forward",action="store_true"); group.add_argument("--backward",action="store_true"); group.add_argument("--index",type=int); add_json(sp)
     sp=subs.add_parser("element-align"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("mode",choices=VALID_ALIGN_MODES); sp.add_argument("elements",nargs="+"); add_json(sp)
     # Compatibility aliases for the old single-image surface: operate on the first image.
@@ -566,6 +671,8 @@ def parser() -> argparse.ArgumentParser:
     for name in ("open","present"):
         sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("--slide"); add_json(sp)
     sp=subs.add_parser("export"); sp.add_argument("path",type=Path); sp.add_argument("output",type=Path); add_json(sp)
+    for name in ("export-pdf","export-pptx"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("output",type=Path); add_json(sp)
     return p
 
 
@@ -593,10 +700,10 @@ def apply_element_update(element: dict, args: argparse.Namespace) -> bool:
             target=_clamp(args.height,.5,400.0); ratio=element["width"]/element["height"] if element["height"] else 1; element["height"]=target; element["width"]=_clamp(target*ratio,.5,400.0)
         else: element["height"]=_clamp(args.height,.5,400.0)
         changed=True
-    mapping=(("x",args.x),("y",args.y),("rotation",args.rotation),("opacity",args.opacity),("text",args.text),("alt",args.alt),("shape",args.shape),("fontFamily",args.font_family),("fontSize",args.font_size),("fontWeight",args.font_weight),("italic",args.italic),("underline",args.underline),("color",args.color),("align",args.align),("verticalAlign",args.vertical_align),("fill",args.fill),("stroke",args.stroke),("strokeWidth",args.stroke_width),("locked",args.locked))
+    mapping=(("x",args.x),("y",args.y),("rotation",args.rotation),("opacity",args.opacity),("text",args.text),("alt",args.alt),("shape",args.shape),("fontFamily",args.font_family),("fontSize",args.font_size),("fontWeight",args.font_weight),("italic",args.italic),("underline",args.underline),("color",args.color),("align",args.align),("verticalAlign",args.vertical_align),("fill",args.fill),("headerFill",getattr(args,"header_fill",None)),("stroke",args.stroke),("strokeWidth",args.stroke_width),("arrow",getattr(args,"arrow",None)),("dash",getattr(args,"dash",None)),("locked",args.locked))
     for key,value in mapping:
         if value is None: continue
-        allowed = (key in {"x","y","rotation","opacity","locked"}) or (kind=="image" and key=="alt") or (kind=="text" and key in {"text","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="shape" and key in {"text","shape","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"})
+        allowed = (key in {"x","y","rotation","opacity","locked"} and kind!="connector") or (key in {"opacity","locked"} and kind=="connector") or (kind=="image" and key=="alt") or (kind=="text" and key in {"text","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="shape" and key in {"text","shape","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="table" and key in {"fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","headerFill","stroke","strokeWidth"}) or (kind=="connector" and key in {"stroke","strokeWidth","arrow","dash"})
         if allowed: element[key]=value; changed=True
     crop_values={"left":args.crop_left,"top":args.crop_top,"right":args.crop_right,"bottom":args.crop_bottom}
     if args.reset_crop:
@@ -642,6 +749,72 @@ def align_elements(slide_obj: dict, refs: list[str], mode: str) -> list[dict]:
     return resolved
 
 
+def table_element_for(slide_obj: dict, ref: str) -> tuple[int, dict]:
+    index, element = resolve_element(slide_obj, ref)
+    if element.get("type") != "table": raise ValueError("operation requires a table element")
+    return index, element
+
+
+def resize_table(element: dict, rows: int | None = None, cols: int | None = None) -> dict:
+    rows = element["rows"] if rows is None else max(1, min(50, int(rows)))
+    cols = element["cols"] if cols is None else max(1, min(30, int(cols)))
+    cells=[]
+    for r in range(rows):
+        old=element["cells"][r] if r < element["rows"] else []
+        cells.append([old[c] if c < len(old) else "" for c in range(cols)])
+    element["rows"]=rows; element["cols"]=cols; element["cells"]=cells
+    return normalize_table_element(element)
+
+
+def uv_executable() -> str:
+    candidates = [shutil.which("uv"), str(Path.home()/".local/bin/uv"), "/opt/homebrew/bin/uv", "/usr/local/bin/uv"]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file(): return candidate
+    raise ValueError("uv is required for PDF/PPTX export; install uv first")
+
+
+def exporter_script(kind: str) -> Path:
+    name = "export-pdf.py" if kind == "pdf" else "export-pptx.py"
+    candidate = Path(__file__).resolve().parents[1]/"scripts"/name
+    if candidate.is_file(): return candidate
+    raise ValueError(f"export helper not found: {candidate}")
+
+
+def importer_script() -> Path:
+    candidate = Path(__file__).resolve().parents[1]/"scripts"/"import-pptx.py"
+    if candidate.is_file(): return candidate
+    raise ValueError(f"import helper not found: {candidate}")
+
+
+def run_pptx_import(source: Path, output: Path, force: bool = False) -> Path:
+    source=source.expanduser().resolve();output=output.expanduser().resolve()
+    if source.suffix.lower() != ".pptx" or not source.is_file(): raise ValueError(f"PowerPoint file not found: {source}")
+    if output.suffix.lower() != ".morrowdeck": output=output.with_suffix(".morrowdeck")
+    if output.exists() and not force: raise ValueError(f"refusing to overwrite existing deck: {output}; use --force")
+    proc=subprocess.run([uv_executable(),"run","--script",str(importer_script()),str(source),str(output)],text=True,capture_output=True)
+    if proc.returncode != 0:
+        detail=(proc.stderr or proc.stdout).strip();raise ValueError(f"PPTX import failed: {detail[-1200:]}")
+    deck=read_deck(output);write_deck(output,deck)
+    missing=missing_assets(deck,output)
+    if missing: raise ValueError("PPTX import created missing assets: "+", ".join(missing))
+    return output
+
+
+def run_rich_export(kind: str, deck_path: Path, output: Path) -> Path:
+    expected = ".pdf" if kind == "pdf" else ".pptx"
+    output = output.expanduser().resolve()
+    if output.suffix.lower() != expected: output = output.with_suffix(expected)
+    deck = read_deck(deck_path)
+    missing = missing_assets(deck, deck_path)
+    if missing: raise ValueError("missing image assets: "+", ".join(missing))
+    proc = subprocess.run([uv_executable(), "run", "--script", str(exporter_script(kind)), str(deck_path.expanduser().resolve()), str(output)], text=True, capture_output=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise ValueError(f"{kind.upper()} export failed: {detail[-1200:]}")
+    if not output.is_file() or output.stat().st_size == 0: raise ValueError(f"{kind.upper()} export produced no file")
+    return output
+
+
 def main() -> int:
     args=parser().parse_args()
     try:
@@ -652,6 +825,8 @@ def main() -> int:
             path=args.path.expanduser().resolve()
             if path.exists() and not args.force: raise ValueError(f"refusing to overwrite existing deck: {path}; use --force")
             write_deck(path,new_deck(args.title)); emit({"ok":True,"path":str(path),"message":f"Created {path}"},args.json); return 0
+        if cmd=="import-pptx":
+            output=run_pptx_import(args.input,args.output,args.force);deck=read_deck(output);emit({"ok":True,"path":str(output),"slides":len(deck["slides"]),"elements":sum(len(x["elements"]) for x in deck["slides"]),"message":f"Imported {args.input} to {output}"},args.json);return 0
         deck=read_deck(args.path.expanduser()); path=args.path.expanduser().resolve()
         if cmd=="validate":
             missing=missing_assets(deck,path)
@@ -677,8 +852,7 @@ def main() -> int:
             if not changed: raise ValueError("set requires --layout, --title, --body, or --body-file")
             deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"position":index+1,**item,"message":f"Updated slide {index+1}"},args.json)
         elif cmd=="duplicate":
-            index,source=resolve_slide(deck,args.slide); item=copy.deepcopy(source); item["id"]=str(uuid.uuid4());
-            for e in item["elements"]: e["id"]=str(uuid.uuid4())
+            index,source=resolve_slide(deck,args.slide); item=copy.deepcopy(source); item["id"]=str(uuid.uuid4()); item["elements"]=remap_elements(source["elements"])
             deck["slides"].insert(index+1,item); deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"position":index+2,**item,"message":f"Duplicated slide {index+1} to {index+2}"},args.json)
         elif cmd=="delete":
             index,item=resolve_slide(deck,args.slide)
@@ -697,6 +871,28 @@ def main() -> int:
             if args.transition_duration is not None: item["transition"]["duration"]=_clamp(args.transition_duration,.05,5); changed=True
             if not changed: raise ValueError("slide-style requires background, notes, or transition options")
             write_deck(path,deck); emit({"ok":True,"position":index+1,"background":item["background"],"notes":item["notes"],"transition":item["transition"],"message":f"Updated slide {index+1} style"},args.json)
+        elif cmd=="theme":
+            emit(deck["theme"],args.json)
+        elif cmd=="theme-set":
+            deck["theme"]=dict(THEME_PRESETS[args.preset])
+            if args.apply_all:
+                theme=deck["theme"]
+                for slide_obj in deck["slides"]:
+                    slide_obj["background"]=theme["background"]
+                    for e in slide_obj["elements"]:
+                        if e["type"] in {"text","shape","table"}:
+                            e["fontFamily"]=theme["fontFamily"]; e["color"]=theme["text"]
+            write_deck(path,deck); emit({"ok":True,"theme":deck["theme"],"appliedAll":args.apply_all,"message":f"Theme set to {args.preset}"},args.json)
+        elif cmd=="view-settings":
+            view=deck["view"]; changed=False
+            for key,value in (("snapToObjects",args.snap_to_objects),("snapToGrid",args.snap_to_grid),("showGrid",args.show_grid),("showGuides",args.show_guides)):
+                if value is not None: view[key]=value; changed=True
+            if args.grid_size is not None: view["gridSize"]=_clamp(args.grid_size,.25,25); changed=True
+            if args.clear_guides: view["guideX"]=[]; view["guideY"]=[]; changed=True
+            if args.guide_x is not None: view["guideX"]=[_clamp(x,-300,300) for x in args.guide_x]; changed=True
+            if args.guide_y is not None: view["guideY"]=[_clamp(y,-300,300) for y in args.guide_y]; changed=True
+            if not changed: emit(view,args.json)
+            else: write_deck(path,deck); emit({"ok":True,"view":deck["view"],"message":"Updated view settings"},args.json)
         elif cmd=="elements":
             _,item=resolve_slide(deck,args.slide); emit([{"position":i+1,**e} for i,e in enumerate(item["elements"])],args.json)
         elif cmd=="element-get":
@@ -707,6 +903,16 @@ def main() -> int:
             sidx,item=resolve_slide(deck,args.slide); e=normalize_shape_element({"type":"shape","shape":args.shape,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":f"Added {args.shape} shape"},args.json)
         elif cmd=="element-add-image":
             sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added image"},args.json)
+        elif cmd=="element-add-table":
+            sidx,item=resolve_slide(deck,args.slide); cells=[]
+            if args.cells_json:
+                try: cells=json.loads(args.cells_json)
+                except json.JSONDecodeError as exc: raise ValueError(f"invalid --cells-json: {exc}") from None
+            e=normalize_table_element({"type":"table","rows":args.rows,"cols":args.cols,"cells":cells,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"color":args.color,"fill":args.fill,"headerFill":args.header_fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added table"},args.json)
+        elif cmd=="element-add-connector":
+            sidx,item=resolve_slide(deck,args.slide); _,a=resolve_element(item,args.from_element); _,b=resolve_element(item,args.to_element)
+            if a["id"]==b["id"]: raise ValueError("connector endpoints must reference different elements")
+            e=normalize_connector_element({"type":"connector","from":{"elementId":a["id"],"anchor":args.from_anchor},"to":{"elementId":b["id"],"anchor":args.to_anchor},"arrow":args.arrow,"stroke":args.stroke,"strokeWidth":args.stroke_width,"dash":args.dash}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added connector"},args.json)
         elif cmd=="element-update":
             sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element)
             if not apply_element_update(e,args): raise ValueError("element-update requires at least one update option")
@@ -714,7 +920,54 @@ def main() -> int:
         elif cmd=="element-delete":
             sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); item["elements"].pop(eidx); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"removed":e,"message":"Deleted element"},args.json)
         elif cmd=="element-duplicate":
-            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); dup=copy.deepcopy(e); dup["id"]=str(uuid.uuid4()); dup["x"]+=2; dup["y"]+=2; item["elements"].insert(eidx+1,dup); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":eidx+2,"element":dup,"message":"Duplicated element"},args.json)
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); dup=copy.deepcopy(e); dup["id"]=str(uuid.uuid4()); dup["groupId"]=None
+            if dup["type"]!="connector": dup["x"]+=2; dup["y"]+=2
+            item["elements"].insert(eidx+1,dup); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":eidx+2,"element":dup,"message":"Duplicated element"},args.json)
+        elif cmd=="table-set":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element)
+            if e["type"]!="table": raise ValueError("table-set requires a table element")
+            if not 1<=args.row<=e["rows"] or not 1<=args.col<=e["cols"]: raise ValueError("table cell out of range")
+            e["cells"][args.row-1][args.col-1]=args.value; item["elements"][eidx]=normalize_table_element(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"row":args.row,"col":args.col,"value":args.value,"message":"Updated table cell"},args.json)
+        elif cmd=="table-resize":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=table_element_for(item,args.element)
+            if args.rows is None and args.cols is None: raise ValueError("table-resize requires --rows or --cols")
+            item["elements"][eidx]=resize_table(e,args.rows,args.cols); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"element":item["elements"][eidx],"message":"Resized table"},args.json)
+        elif cmd in {"table-row-add","table-row-delete","table-col-add","table-col-delete"}:
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=table_element_for(item,args.element)
+            if cmd=="table-row-add":
+                at=e["rows"]+1 if args.at is None else args.at
+                if not 1<=at<=e["rows"]+1: raise ValueError("--at row out of range")
+                e["cells"].insert(at-1,["" for _ in range(e["cols"])]); e["rows"]+=1
+            elif cmd=="table-row-delete":
+                if e["rows"]<=1: raise ValueError("table must keep at least one row")
+                at=e["rows"] if args.at is None else args.at
+                if not 1<=at<=e["rows"]: raise ValueError("--at row out of range")
+                e["cells"].pop(at-1); e["rows"]-=1
+            elif cmd=="table-col-add":
+                at=e["cols"]+1 if args.at is None else args.at
+                if not 1<=at<=e["cols"]+1: raise ValueError("--at column out of range")
+                for row in e["cells"]: row.insert(at-1,"")
+                e["cols"]+=1
+            else:
+                if e["cols"]<=1: raise ValueError("table must keep at least one column")
+                at=e["cols"] if args.at is None else args.at
+                if not 1<=at<=e["cols"]: raise ValueError("--at column out of range")
+                for row in e["cells"]: row.pop(at-1)
+                e["cols"]-=1
+            item["elements"][eidx]=normalize_table_element(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"element":item["elements"][eidx],"message":"Updated table structure"},args.json)
+        elif cmd=="element-group":
+            sidx,item=resolve_slide(deck,args.slide); members=resolve_elements(item,args.elements)
+            if len(members)<2: raise ValueError("element-group requires at least two distinct elements")
+            gid=str(uuid.uuid4())
+            for e in members: e["groupId"]=gid
+            write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"groupId":gid,"elements":[e["id"] for e in members],"message":f"Grouped {len(members)} elements"},args.json)
+        elif cmd=="element-ungroup":
+            sidx,item=resolve_slide(deck,args.slide); _,target=resolve_element(item,args.element); gid=target.get("groupId")
+            if not gid: raise ValueError("element is not grouped")
+            members=[]
+            for e in item["elements"]:
+                if e.get("groupId")==gid: e["groupId"]=None; members.append(e["id"])
+            write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"groupId":gid,"elements":members,"message":f"Ungrouped {len(members)} elements"},args.json)
         elif cmd=="element-order":
             sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); elements=item["elements"]; elements.pop(eidx)
             if args.to_front: target=len(elements)
@@ -749,6 +1002,8 @@ def main() -> int:
             launch(path,True,args.slide); emit({"ok":True,"path":str(path),"message":f"Presenting {path}"},args.json)
         elif cmd=="export":
             output=args.output.expanduser().resolve(); copy_assets(deck,path,output); write_deck(output,deck); emit({"ok":True,"path":str(output),"message":f"Exported {output}"},args.json)
+        elif cmd in {"export-pdf","export-pptx"}:
+            kind="pdf" if cmd=="export-pdf" else "pptx"; output=run_rich_export(kind,path,args.output); emit({"ok":True,"path":str(output),"format":kind,"message":f"Exported {output}"},args.json)
         else: raise ValueError(f"unsupported command: {cmd}")
         return 0
     except (ValueError,OSError,subprocess.CalledProcessError) as exc:

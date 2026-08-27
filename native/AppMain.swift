@@ -124,6 +124,9 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         fileMenu.addItem(.separator())
         fileMenu.addItem(menuItem("Save", key: "s", modifiers: [.command], action: #selector(menuSave)))
         fileMenu.addItem(menuItem("Save As…", key: "S", modifiers: [.command, .shift], action: #selector(menuSaveAs)))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(menuItem("Export PDF…", key: "", modifiers: [], action: #selector(menuExportPDF)))
+        fileMenu.addItem(menuItem("Export PowerPoint…", key: "", modifiers: [], action: #selector(menuExportPPTX)))
 
         let editItem = NSMenuItem()
         main.addItem(editItem)
@@ -157,6 +160,8 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
     @objc private func menuOpen() { showOpenPanel() }
     @objc private func menuSave() { evaluate("window.presenterMenuAction?.('save')") }
     @objc private func menuSaveAs() { evaluate("window.presenterMenuAction?.('saveAs')") }
+    @objc private func menuExportPDF() { evaluate("window.presenterMenuAction?.('exportPdf')") }
+    @objc private func menuExportPPTX() { evaluate("window.presenterMenuAction?.('exportPptx')") }
     @objc private func menuUndo() { evaluate("window.presenterMenuAction?.('undo')") }
     @objc private func menuRedo() { evaluate("window.presenterMenuAction?.('redo')") }
     @objc private func menuCut() { evaluate("window.presenterMenuAction?.('cut')") }
@@ -200,6 +205,12 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         case "autosave":
             guard currentURL != nil, let deck = payload["deck"] else { return }
             save(deck: deck, forcePanel: false, notify: true)
+        case "exportPdf":
+            guard let deck = payload["deck"] else { return }
+            exportDeck(deck: deck, kind: "pdf")
+        case "exportPptx":
+            guard let deck = payload["deck"] else { return }
+            exportDeck(deck: deck, kind: "pptx")
         case "chooseImage":
             guard let deck = payload["deck"] else { return }
             chooseImage(deck: deck)
@@ -224,12 +235,40 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
     private func showOpenPanel() {
         let panel = NSOpenPanel()
         panel.title = "Open Morrow Presenter Deck"
-        panel.allowedContentTypes = [UTType(filenameExtension: "morrowdeck")!, .json]
+        var types: [UTType] = [UTType(filenameExtension: "morrowdeck")!, .json]
+        if let pptx = UTType(filenameExtension: "pptx") { types.append(pptx) }
+        panel.allowedContentTypes = types
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            loadDeck(url: url, present: false, slideRef: nil)
+            if url.pathExtension.lowercased() == "pptx" { importPowerPoint(source: url) }
+            else { loadDeck(url: url, present: false, slideRef: nil) }
         }
+    }
+
+    private func importPowerPoint(source: URL) {
+        guard let uv = uvExecutable(), let resourceURL = Bundle.main.resourceURL else {
+            showError("Could not import PowerPoint", error: NSError(domain: "MorrowPresenter", code: 30, userInfo: [NSLocalizedDescriptionKey: "uv is required for PPTX import"])); return
+        }
+        let helper = resourceURL.appendingPathComponent("Scripts/import-pptx.py")
+        guard FileManager.default.fileExists(atPath: helper.path) else {
+            showError("Could not import PowerPoint", error: NSError(domain: "MorrowPresenter", code: 31, userInfo: [NSLocalizedDescriptionKey: "Bundled PPTX import helper is missing"])); return
+        }
+        let panel = NSSavePanel(); panel.title = "Import PowerPoint as Morrow Deck"
+        panel.allowedContentTypes = [UTType(filenameExtension: "morrowdeck")!]
+        panel.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + ".morrowdeck"
+        guard panel.runModal() == .OK, let output = panel.url else { return }
+        do {
+            let process = Process(); let stderr = Pipe(); process.executableURL = uv
+            process.arguments = ["run", "--script", helper.path, source.path, output.path]
+            process.standardError = stderr; process.standardOutput = Pipe(); try process.run(); process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Unknown import error"
+                throw NSError(domain: "MorrowPresenter", code: 32, userInfo: [NSLocalizedDescriptionKey: detail])
+            }
+            diagnostic("imported pptx \(source.path) -> \(output.path)")
+            loadDeck(url: output, present: false, slideRef: nil)
+        } catch { showError("Could not import PowerPoint", error: error) }
     }
 
     private func save(deck: Any, forcePanel: Bool, notify: Bool = true) {
@@ -258,6 +297,56 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         } catch {
             showError("Could not save deck", error: error)
         }
+    }
+
+    private func uvExecutable() -> URL? {
+        var candidates: [String] = []
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map { String($0) + "/uv" })
+        }
+        candidates.append(contentsOf: [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/uv").path,
+            "/opt/homebrew/bin/uv", "/usr/local/bin/uv"
+        ])
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return URL(fileURLWithPath: candidate)
+        }
+        return nil
+    }
+
+    private func exportDeck(deck: Any, kind: String) {
+        if currentURL == nil { save(deck: deck, forcePanel: true, notify: true) }
+        guard let deckURL = currentURL else { return }
+        // Persist the exact state being exported before invoking the helper.
+        save(deck: deck, forcePanel: false, notify: true)
+        guard let uv = uvExecutable(), let resourceURL = Bundle.main.resourceURL else {
+            showError("Could not export", error: NSError(domain: "MorrowPresenter", code: 20, userInfo: [NSLocalizedDescriptionKey: "uv is required for PDF/PPTX export"])); return
+        }
+        let ext = kind == "pdf" ? "pdf" : "pptx"
+        let helper = resourceURL.appendingPathComponent("Scripts/export-\(ext).py")
+        guard FileManager.default.fileExists(atPath: helper.path) else {
+            showError("Could not export", error: NSError(domain: "MorrowPresenter", code: 21, userInfo: [NSLocalizedDescriptionKey: "Bundled export helper is missing"])); return
+        }
+        let panel = NSSavePanel()
+        panel.title = kind == "pdf" ? "Export PDF" : "Export PowerPoint"
+        if kind == "pdf" { panel.allowedContentTypes = [.pdf] }
+        else if let pptx = UTType(filenameExtension: "pptx") { panel.allowedContentTypes = [pptx] }
+        panel.nameFieldStringValue = deckURL.deletingPathExtension().lastPathComponent + "." + ext
+        guard panel.runModal() == .OK, let output = panel.url else { return }
+        do {
+            let process = Process(); let stderr = Pipe(); let stdout = Pipe()
+            process.executableURL = uv
+            process.arguments = ["run", "--script", helper.path, deckURL.path, output.path]
+            process.standardError = stderr; process.standardOutput = stdout
+            try process.run(); process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                let data = stderr.fileHandleForReading.readDataToEndOfFile()
+                let detail = String(data: data, encoding: .utf8) ?? "Unknown export error"
+                throw NSError(domain: "MorrowPresenter", code: 22, userInfo: [NSLocalizedDescriptionKey: detail])
+            }
+            diagnostic("exported \(kind) \(output.path)")
+            send(function: "window.presenterNativeExported", payload: ["path": output.path, "format": kind])
+        } catch { showError("Could not export \(kind.uppercased())", error: error) }
     }
 
     private func chooseImage(deck: Any) {

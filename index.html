@@ -17,6 +17,8 @@
       <button id="open-deck" class="ghost">打开</button>
       <button id="save-deck" class="ghost">保存</button>
       <button id="save-as" class="ghost">另存为</button>
+      <button id="export-pdf" class="ghost" title="导出 PDF">PDF</button>
+      <button id="export-pptx" class="ghost" title="导出 PowerPoint">PPTX</button>
       <button id="present" class="primary">放映</button>
       <input id="import-file" type="file" accept="application/json,.json,.morrowdeck" hidden />
     </div>
@@ -51,6 +53,14 @@
         </select>
         <button id="insert-shape" class="ghost">形状</button>
         <button id="choose-image" class="ghost">图片</button>
+        <button id="insert-table" class="ghost">表格</button>
+        <button id="connect-selected" class="ghost" title="连接两个已选对象">连接</button>
+        <select id="theme-preset" aria-label="主题" title="应用主题到整份文稿">
+          <option value="default">默认主题</option><option value="dark">深色主题</option><option value="warm">暖色主题</option><option value="blue">蓝色主题</option>
+        </select>
+        <button id="toggle-snap" class="ghost active" title="对象/参考线吸附">吸附</button>
+        <button id="toggle-grid" class="ghost" title="显示网格并启用网格吸附">网格</button>
+        <button id="toggle-guides" class="ghost active" title="显示中心参考线">参考线</button>
         <label class="compact-label" title="Slide 背景">背景 <input id="slide-background" type="color" value="#ffffff" /></label>
         <select id="slide-transition" aria-label="切换效果" title="切换效果">
           <option value="none">无切换</option>
@@ -89,12 +99,22 @@
         <input id="opacity" class="number-control narrow" type="number" min="0" max="100" step="5" value="100" title="透明度 %" aria-label="透明度" />
         <button id="crop-toggle" class="compact-button" title="非破坏性裁切">裁切</button>
         <button id="crop-reset" class="compact-button" title="重置裁切">重置</button>
+        <select id="connector-arrow" title="连接符箭头" aria-label="连接符箭头">
+          <option value="none">无线头</option><option value="end">单箭头</option><option value="both">双箭头</option>
+        </select>
+        <button id="connector-dash" class="compact-button" title="连接符虚线">虚线</button>
         <select id="object-order" title="层级" aria-label="层级">
           <option value="">层级</option><option value="front">置于顶层</option><option value="forward">上移一层</option><option value="backward">下移一层</option><option value="back">置于底层</option>
         </select>
         <select id="object-align" title="对齐/分布" aria-label="对齐/分布">
           <option value="">对齐</option><option value="left">左</option><option value="center">水平居中</option><option value="right">右</option><option value="top">顶端</option><option value="middle">垂直居中</option><option value="bottom">底端</option><option value="distribute-h">水平分布</option><option value="distribute-v">垂直分布</option>
         </select>
+        <button id="table-row-add" class="compact-button" title="表格增加一行">+行</button>
+        <button id="table-row-delete" class="compact-button" title="表格删除末行">-行</button>
+        <button id="table-col-add" class="compact-button" title="表格增加一列">+列</button>
+        <button id="table-col-delete" class="compact-button" title="表格删除末列">-列</button>
+        <button id="group-objects" class="compact-button" title="组合所选对象 ⌘G">组合</button>
+        <button id="ungroup-objects" class="compact-button" title="取消组合 ⇧⌘G">取消组合</button>
         <button id="lock-object" class="compact-button" title="锁定/解锁">锁定</button>
         <button id="duplicate-object" class="compact-button" title="复制对象 ⌘D">复制对象</button>
         <button id="delete-object" class="danger-ghost compact-button" title="删除对象">删除对象</button>

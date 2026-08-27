@@ -1,109 +1,160 @@
 # `.morrowdeck` format
 
-`.morrowdeck` 是 UTF-8 JSON。Version 1 保持可读、可 diff，并允许旧 deck 在 normalize 时自动迁移。
+`.morrowdeck` 是 UTF-8 JSON。Version 1 保持可读、可 diff；旧 deck 在 normalize 时自动补齐新字段。
 
 ```json
 {
   "version": 1,
   "title": "Weekly Update",
   "selectedId": "slide-id",
+  "theme": {
+    "name": "blue",
+    "fontFamily": "Inter",
+    "titleFontFamily": "Inter",
+    "background": "#f5f8ff",
+    "text": "#14213d",
+    "accent": "#2563eb"
+  },
+  "view": {
+    "snapToObjects": true,
+    "snapToGrid": false,
+    "showGrid": false,
+    "showGuides": true,
+    "gridSize": 2.5,
+    "guideX": [50],
+    "guideY": [50]
+  },
   "slides": [
     {
       "id": "slide-id",
       "layout": "blank",
       "title": "",
       "body": "",
-      "background": "#f7f7f8",
+      "background": "#f5f8ff",
       "notes": "Speaker-only notes",
       "transition": { "type": "fade", "duration": 0.35 },
-      "elements": [
-        {
-          "id": "text-id",
-          "type": "text",
-          "text": "Architecture",
-          "x": 8, "y": 8, "width": 42, "height": 12,
-          "rotation": 0, "opacity": 1, "locked": false,
-          "fontFamily": "Inter", "fontSize": 32, "fontWeight": 700,
-          "italic": false, "underline": false,
-          "color": "#202124", "align": "left", "verticalAlign": "top",
-          "fill": "transparent", "stroke": "transparent", "strokeWidth": 0,
-          "padding": 1.2
-        },
-        {
-          "id": "shape-id",
-          "type": "shape",
-          "shape": "rounded-rect",
-          "text": "Agent",
-          "x": 12, "y": 32, "width": 24, "height": 16,
-          "rotation": 0, "opacity": 1, "locked": false,
-          "fill": "#e8e8e4", "stroke": "#4b4d50", "strokeWidth": 1.5,
-          "fontFamily": "Inter", "fontSize": 20, "fontWeight": 400,
-          "italic": false, "underline": false,
-          "color": "#202124", "align": "center", "verticalAlign": "middle"
-        },
-        {
-          "id": "image-id",
-          "type": "image",
-          "path": ".morrow-assets/4566b637ae298d756c193d3e.jpg",
-          "alt": "Architecture diagram",
-          "x": 55, "y": 18, "width": 36, "height": 48,
-          "intrinsicWidth": 640, "intrinsicHeight": 480,
-          "crop": { "left": 6, "top": 0, "right": 10, "bottom": 0 },
-          "rotation": 0, "opacity": 1, "locked": false
-        }
-      ]
+      "elements": []
     }
   ]
 }
 ```
 
+## Deck fields
+
+- `version`: 当前 `1`。
+- `title`: deck 标题。
+- `selectedId`: GUI selection hint，必须指向一个 slide ID。
+- `theme`: deck 级默认视觉 token。
+- `view`: 编辑器吸附/网格/参考线设置。
+- `slides`: 非空、按顺序排列。
+
+`theme.name` 目前内置 `default`, `dark`, `warm`, `blue`，但其余字段会独立持久化，因此未来可支持自定义主题。
+
+`view.gridSize`, `guideX`, `guideY` 均使用 slide 百分比坐标。
+
 ## Slide fields
 
-- `layout`: `title-body`, `title`, `section`, `blank`.
+- `layout`: `title-body`, `title`, `section`, `blank`。
 - `title`, `body`: 兼容的版式占位层文本。
-- `background`: CSS color string；GUI 颜色选择器主要产生 `#rrggbb`。
-- `notes`: 演讲者备注，不在普通放映画面中显示。
-- `transition.type`: `none` 或 `fade`。
+- `background`: CSS color string。
+- `notes`: 演讲者备注。
+- `transition.type`: `none` / `fade`。
 - `transition.duration`: 秒。
-- `elements`: 按数组顺序从后到前渲染；后面的 element 位于更高层。
+- `elements`: 数组顺序也是 z-order；后面的对象位于更高层。
 
 ## Element common fields
 
-所有 element 都有：
+常规 element 共享：
 
 - `id`: 稳定唯一 ID。
-- `type`: `text`, `shape`, `image`。
-- `x`, `y`: 对象左上角，单位是 slide 宽/高百分比。
-- `width`, `height`: 对象完整 bounding box，相同百分比坐标系。
+- `type`: `text`, `shape`, `image`, `table`, `connector`。
+- `x`, `y`, `width`, `height`: slide 百分比坐标系。
 - `rotation`: 度数。
 - `opacity`: `0..1`。
-- `locked`: GUI 中锁定后禁止拖动/缩放/旋转。
+- `locked`: GUI 中禁止直接变换。
+- `groupId`: `null` 或 group UUID。相同非空 `groupId` 表示同一组合；组合不建立嵌套容器，因此内部对象依然保持自身 geometry/z-order。
 
-坐标允许暂时超出 `0..100`，因此对象可以部分位于 slide 外侧。
+坐标可以超出 `0..100`，允许对象部分位于 slide 外。
 
-## Text elements
+## Text
 
-额外字段：`text`, `fontFamily`, `fontSize`, `fontWeight`, `italic`, `underline`, `color`, `align`, `verticalAlign`, `fill`, `stroke`, `strokeWidth`, `padding`。
+`type: text` 额外包含 `text`, `fontFamily`, `fontSize`, `fontWeight`, `italic`, `underline`, `color`, `align`, `verticalAlign`, `fill`, `stroke`, `strokeWidth`, `padding`。
 
-## Shape elements
+## Shape
 
-`shape` 支持：`rect`, `rounded-rect`, `ellipse`, `line`, `arrow`。形状还可拥有 `text` 和与 text element 相同的文本样式。
+`shape`: `rect`, `rounded-rect`, `ellipse`, `line`, `arrow`。Shape 可带与 text 相同的文字样式。
 
-## Image elements
+## Image
 
-- `path`: 安全相对路径。Presenter 管理的资源位于 `.morrow-assets/`。
-- `intrinsicWidth`, `intrinsicHeight`: 原图像素尺寸。
-- 图片缩放保持原始宽高比，因此 `height` 会从 `width + intrinsic dimensions` 重新规范化。
-- `crop.left/top/right/bottom`: 完整图片框内部的非破坏性遮罩百分比。相对两侧会规范化为至少保留 5% 可见区域。
-- 图片文件本身不会因为 crop/resize/rotate 被重编码。
+```json
+{
+  "type": "image",
+  "path": ".morrow-assets/hash.jpg",
+  "alt": "Architecture",
+  "x": 55, "y": 18, "width": 36, "height": 48,
+  "intrinsicWidth": 640, "intrinsicHeight": 480,
+  "crop": { "left": 6, "top": 0, "right": 10, "bottom": 0 }
+}
+```
 
-多个 image element 可以引用同一个 content-hash asset；这不会复制文件。
+- `path`: deck 内安全相对路径。
+- `intrinsicWidth/Height`: 原图像素尺寸。
+- `height` 会按 source aspect ratio 从 `width` 规范化。
+- `crop.*`: 完整图片框内部的非破坏性遮罩百分比；至少保留 5% 可见区域。
+- 编辑 crop/resize/rotate 不修改 asset 字节。
 
-## Assets and export
+## Table
 
-图片不是 base64 内嵌数据。`element-add-image` 会把已有图片复制到 deck 旁的 `.morrow-assets/`，按 SHA-256 前缀命名去重。支持 PNG/JPEG/GIF/WebP/HEIC/HEIF。
+```json
+{
+  "type": "table",
+  "rows": 3,
+  "cols": 2,
+  "cells": [["Metric", "Value"], ["Pass", "24/24"], ["Recovery", "Local"]],
+  "fill": "#ffffff",
+  "headerFill": "#e8e8e4",
+  "stroke": "#777777",
+  "strokeWidth": 1
+}
+```
 
-`morrow-presenter export` 和 Mac App 的另存为会复制 `elements[]` 中所有被引用的图片资源。旧的 `slides[].image` 也会在读取时自动迁移成一个 `type=image` element。
+`cells` 始终被规范化为严格 `rows × cols` string matrix。第一行使用 `headerFill`。Table 同样具有 common geometry 和文本样式字段。
+
+## Connector
+
+Connector 不是静态截图线，而是保存端点关系：
+
+```json
+{
+  "type": "connector",
+  "from": { "elementId": "agent-id", "anchor": "auto" },
+  "to": { "elementId": "system-id", "anchor": "auto" },
+  "arrow": "both",
+  "stroke": "#4b4d50",
+  "strokeWidth": 2,
+  "dash": true
+}
+```
+
+Endpoint 可以引用对象，也可以是 free point：`{"elementId": null, "anchor":"auto", "x":40, "y":50}`。
+
+Anchors: `auto`, `top`, `right`, `bottom`, `left`, `center`。`arrow`: `none`, `end`, `both`。引用对象移动时 GUI 会实时重新求端点。引用已不存在的 element 在 normalize 时会退化为 free endpoint，而不会留下悬空 ID。
+
+## Assets
+
+图片不是 base64。`element-add-image` 将已有图片复制到 sibling `.morrow-assets/`，使用 SHA-256 前缀文件名去重。支持 PNG/JPEG/GIF/WebP/HEIC/HEIF。
+
+`morrow-presenter export` 和 Mac App Save As 会复制所有引用 asset。旧 `slides[].image` 会自动迁移成一个 `type=image` element。
+
+## Interchange
+
+- `export-pdf`: 将 Morrow model 渲染为真实 PDF。
+- `export-pptx`: 将常见 Morrow element 映射成真正的 PowerPoint OOXML objects。
+- `import-pptx`: 将常见 PowerPoint shapes/images/tables/text 转成 Morrow objects；图片抽取到 `.morrow-assets/`。
+
+交换脚本通过 PEP 723 + `uv run --script` 声明依赖，不把 virtualenv/vendor 包写入 repo。
+
+复杂 PowerPoint object 的目标是 graceful degradation，不保证完全无损 round-trip。当前图表/SmartArt 等可能变成普通占位 shape；PPTX 中 connector 回导可能变成普通 line。
 
 ## Machine-readable schema
 
@@ -112,4 +163,4 @@ morrow-presenter schema --json
 morrow-presenter capabilities --json
 ```
 
-推荐通过 CLI 修改，而不是用临时脚本直接写 JSON：CLI 会保持 ID、规范化字段、原子写入文件、检查 asset 路径和 slide/element reference。
+Agent 应优先通过 CLI 进行 mutation：CLI 会规范化字段、保持 IDs、原子写入、校验引用和 asset 路径。
