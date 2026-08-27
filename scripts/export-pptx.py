@@ -63,7 +63,9 @@ def add_element(slide,e,deck_path,byid):
     if typ=='image':
         sh=slide.shapes.add_picture(cropped_image(deck_path,e),left,top,width,height);sh.rotation=float(e.get('rotation',0));return
     if typ=='text':
-        sh=slide.shapes.add_textbox(left,top,width,height);set_text(sh,e.get('text',''),e);fill_line(sh,e);sh.rotation=float(e.get('rotation',0));return
+        sh=slide.shapes.add_textbox(left,top,width,height);set_text(sh,e.get('text',''),e);fill_line(sh,e);sh.rotation=float(e.get('rotation',0));
+        if e.get('role') in ('title','body'): sh.name=f"MorrowPresenter:{e['role']}"
+        return
     if typ=='shape':
         st={'rect':MSO_SHAPE.RECTANGLE,'rounded-rect':MSO_SHAPE.ROUNDED_RECTANGLE,'ellipse':MSO_SHAPE.OVAL}.get(e.get('shape'))
         if e.get('shape') in ('line','arrow'):
@@ -83,11 +85,7 @@ def main():
     deck_path=Path(sys.argv[1]).resolve();out=Path(sys.argv[2]).resolve();deck=json.loads(deck_path.read_text());prs=Presentation();prs.slide_width=Inches(SW);prs.slide_height=Inches(SH);blank=prs.slide_layouts[6]
     # remove default first slide if any only as created by template no slides normally
     for data in deck['slides']:
-        slide=prs.slides.add_slide(blank); bg=slide.background.fill;bg.solid();bg.fore_color.rgb=rgb(data.get('background',deck.get('theme',{}).get('background')),'FFFFFF');theme=deck.get('theme',{});layout=data.get('layout','title-body')
-        if layout!='blank' and data.get('title'):
-            tb=slide.shapes.add_textbox(Inches(1.15),Inches(1.0 if layout=='title-body' else 2.25),Inches(11.05),Inches(1.5));set_text(tb,data['title'],{'fontFamily':theme.get('titleFontFamily','Arial'),'fontSize':42 if layout=='title-body' else 54,'fontWeight':700,'color':theme.get('text','#202124'),'align':'center' if layout in ('title','section') else 'left','verticalAlign':'middle'})
-        if layout in ('title-body','section') and data.get('body'):
-            tb=slide.shapes.add_textbox(Inches(1.15),Inches(2.5 if layout=='title-body' else 4),Inches(11.05),Inches(3));set_text(tb,data['body'],{'fontFamily':theme.get('fontFamily','Arial'),'fontSize':24,'fontWeight':400,'color':theme.get('text','#202124'),'align':'center' if layout=='section' else 'left','verticalAlign':'top'})
+        slide=prs.slides.add_slide(blank); bg=slide.background.fill;bg.solid();bg.fore_color.rgb=rgb(data.get('background',deck.get('theme',{}).get('background')),'FFFFFF')
         byid={e['id']:e for e in data.get('elements',[])}
         for e in data.get('elements',[]):add_element(slide,e,deck_path,byid)
         if data.get('notes'):

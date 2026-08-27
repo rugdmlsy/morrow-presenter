@@ -12,6 +12,7 @@ mkdir -p "$TMP_DIR/exported"
 "$CLI" set "$DECK" 1 --layout title --title "Opening" >/dev/null
 "$CLI" add "$DECK" --after 1 --layout blank --title "Object slide" >/dev/null
 "$CLI" slide-style "$DECK" 2 --background '#f7f7f8' --notes 'Speaker note' --transition fade --transition-duration 0.3 >/dev/null
+"$CLI" element-update "$DECK" 2 @title --x 18 --y 6 --width 52 --height 14 >/dev/null
 
 TEXT_ID=$("$CLI" element-add-text "$DECK" 2 'Hello' --x 10 --y 10 --width 28 --height 12 --font-size 30 --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["id"])')
 SHAPE_ID=$("$CLI" element-add-shape "$DECK" 2 --shape rounded-rect --text 'Box' --x 48 --y 15 --width 24 --height 18 --fill '#ffeeaa' --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["element"]["id"])')
@@ -48,13 +49,17 @@ assert slide["notes"] == "Speaker note"
 assert slide["transition"] == {"type": "fade", "duration": 0.3}
 assert len(slide["elements"]) >= 3
 texts = [e for e in slide["elements"] if e["type"] == "text"]
+role_title = next(e for e in texts if e.get("role") == "title")
+normal_texts = [e for e in texts if e.get("role") is None]
 shapes = [e for e in slide["elements"] if e["type"] == "shape"]
 images = [e for e in slide["elements"] if e["type"] == "image"]
-assert len(texts) == 2
-assert texts[0]["fontWeight"] == 700 and texts[0]["italic"] and texts[0]["underline"]
-assert texts[0]["rotation"] == 12
+assert role_title["text"] == "Object slide"
+assert (role_title["x"], role_title["y"], role_title["width"], role_title["height"]) == (18.0, 6.0, 52.0, 14.0)
+assert len(normal_texts) == 2
+assert normal_texts[0]["fontWeight"] == 700 and normal_texts[0]["italic"] and normal_texts[0]["underline"]
+assert normal_texts[0]["rotation"] == 12
 assert shapes and shapes[0]["shape"] == "rounded-rect"
-assert texts[0]["y"] == shapes[0]["y"]
+assert normal_texts[0]["y"] == shapes[0]["y"]
 if images:
     assert len(images) == 2
     assert images[0]["crop"] == {"left": 7.0, "top": 4.0, "right": 9.0, "bottom": 6.0}
@@ -78,9 +83,11 @@ JSON
   python3 - "$TMP_DIR/legacy.json" <<'PY'
 import json,sys
 slide=json.load(open(sys.argv[1]))
-assert "image" not in slide
-assert len(slide["elements"]) == 1
-assert slide["elements"][0]["type"] == "image"
+assert "image" not in slide and "title" not in slide and "body" not in slide
+assert len(slide["elements"]) == 3
+roles={e.get("role"):e for e in slide["elements"] if e["type"]=="text"}
+assert roles["title"]["text"] == "t" and roles["body"]["text"] == "b"
+assert any(e["type"] == "image" for e in slide["elements"])
 print("LEGACY_MIGRATION_OK")
 PY
 fi

@@ -75,9 +75,9 @@ NUMERIC_DECK="$TMP_DIR/numeric-prefix.morrowdeck"
 for label in first second third; do "$CLI" element-add-text "$NUMERIC_DECK" 1 "$label" >/dev/null; done
 python3 - "$NUMERIC_DECK" <<'PY'
 import json,sys
-p=sys.argv[1];d=json.load(open(p));d['slides'][0]['elements'][0]['id']='00000003-aaaa-bbbb-cccc-000000000001';open(p,'w').write(json.dumps(d,indent=2)+'\n')
+p=sys.argv[1];d=json.load(open(p));target=next(e for e in d['slides'][0]['elements'] if e.get('type')=='text' and e.get('text')=='first');target['id']='00000003-aaaa-bbbb-cccc-000000000001';open(p,'w').write(json.dumps(d,indent=2)+'\n')
 PY
-"$CLI" element-get "$NUMERIC_DECK" 1 00000003 --json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["position"]==1 and x["text"]=="first"; print("NUMERIC_SHORT_ID_OK")'
+"$CLI" element-get "$NUMERIC_DECK" 1 00000003 --json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["text"]=="first"; print("NUMERIC_SHORT_ID_OK")'
 
 "$CLI" export-pdf "$DECK" "$PDF" >/dev/null
 "$CLI" export-pptx "$DECK" "$PPTX" >/dev/null
@@ -103,6 +103,28 @@ if any(e.get('path') for e in deck['slides'][0]['elements'] if e['type']=='image
     for e in deck['slides'][0]['elements']:
         if e['type']=='image': assert (Path(sys.argv[1]).parent/e['path']).is_file()
 print('PPTX_ROUNDTRIP_OK', ','.join(sorted(set(types))))
+PY
+
+ROLE_DECK="$TMP_DIR/roles.morrowdeck"
+ROLE_PPTX="$TMP_DIR/roles.pptx"
+ROLE_ROUNDTRIP="$TMP_DIR/roles-roundtrip.morrowdeck"
+"$CLI" new "$ROLE_DECK" --title Roles >/dev/null
+"$CLI" set "$ROLE_DECK" 1 --layout title-body --title 'Movable title' --body 'Movable body' >/dev/null
+"$CLI" element-update "$ROLE_DECK" 1 @title --x 17 --y 11 --width 61 --height 19 --rotation 3 >/dev/null
+"$CLI" element-update "$ROLE_DECK" 1 @body --x 23 --y 47 --width 49 --height 31 --rotation 1 >/dev/null
+"$CLI" export-pptx "$ROLE_DECK" "$ROLE_PPTX" >/dev/null
+"$CLI" import-pptx "$ROLE_PPTX" "$ROLE_ROUNDTRIP" >/dev/null
+python3 - "$ROLE_DECK" "$ROLE_ROUNDTRIP" <<'PY'
+import json,sys
+src=json.load(open(sys.argv[1]));rt=json.load(open(sys.argv[2]))
+def roles(deck): return {e.get('role'):e for e in deck['slides'][0]['elements'] if e.get('type')=='text' and e.get('role')}
+a,b=roles(src),roles(rt)
+assert set(a)=={'title','body'} and set(b)=={'title','body'}
+assert b['title']['text']=='Movable title' and b['body']['text']=='Movable body'
+for role in ('title','body'):
+    for key in ('x','y','width','height'):
+        assert abs(a[role][key]-b[role][key]) < .25, (role,key,a[role][key],b[role][key])
+print('ROLE_PPTX_ROUNDTRIP_OK')
 PY
 
 echo ADVANCED_SMOKE_OK

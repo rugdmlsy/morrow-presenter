@@ -110,11 +110,6 @@ def main():
     deck_path=Path(sys.argv[1]).resolve(); out=Path(sys.argv[2]).resolve(); deck=json.loads(deck_path.read_text()); out.parent.mkdir(parents=True,exist_ok=True); c=canvas.Canvas(str(out),pagesize=(W,H),pageCompression=1)
     for slide in deck['slides']:
         c.setFillColor(hexcolor(slide.get('background',deck.get('theme',{}).get('background','#ffffff')),'#ffffff')); c.rect(0,0,W,H,fill=1,stroke=0)
-        layout=slide.get('layout','title-body'); theme=deck.get('theme',{}); title=slide.get('title',''); body=slide.get('body','')
-        if layout!='blank' and title:
-            te={'text':title,'fontFamily':theme.get('titleFontFamily','Inter'),'fontSize':42 if layout=='title-body' else 54,'fontWeight':700,'color':theme.get('text','#202124'),'align':'center' if layout in ('title','section') else 'left','verticalAlign':'middle'}; draw_text(c,te,82,330 if layout=='title-body' else 190,796,120,title)
-        if layout in ('title-body','section') and body:
-            be={'text':body,'fontFamily':theme.get('fontFamily','Inter'),'fontSize':24,'fontWeight':400,'color':theme.get('text','#202124'),'align':'center' if layout=='section' else 'left','verticalAlign':'top'}; draw_text(c,be,82,95 if layout=='title-body' else 100,796,220,body)
         byid={e['id']:e for e in slide.get('elements',[])}
         for e in slide.get('elements',[]): draw_element(c,e,deck_path,byid)
         c.showPage()

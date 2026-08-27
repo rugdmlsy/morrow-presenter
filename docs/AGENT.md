@@ -17,7 +17,7 @@ Slide 和 element 都支持：
 - 稳定 UUID；
 - 唯一 UUID 前缀（至少 6 个字符）。
 
-编辑器打开“组件标识”后，普通 element 会显示 `#序号 · 类型/名称 · 8位短ID`，版式占位层显示 `@title` / `@body`。8 位短 ID 可直接作为 CLI element ref；`@title` 对应 `set <deck> <slide> --title ...`，`@body` 对应 `set <deck> <slide> --body ...`。多步 mutation 仍优先保存/复用稳定 ID，因为增删和 z-order 会改变 position。
+标题和正文也是普通 `text` element，只通过 `role: "title"` / `role: "body"` 标记语义。编辑器打开“组件标识”后，它们会像其他 element 一样显示序号和短 ID，并额外显示 `@title` / `@body`。8 位短 ID、`@title`、`@body` 都可直接作为 CLI element ref；因此 agent 可以用 `element-update` 修改它们的位置、尺寸、旋转和文字样式。`set --title` / `set --body` 保留为修改 role 文本内容的便捷别名。多步 mutation 仍优先保存/复用稳定 ID，因为增删和 z-order 会改变 position。
 
 ## Slides
 
@@ -34,7 +34,15 @@ morrow-presenter slide-style talk.morrowdeck 2 \
   --transition fade --transition-duration 0.3
 ```
 
-长正文/备注可使用 `--body-file -` / `--notes-file -`。
+长正文/备注可使用 `--body-file -` / `--notes-file -`。版式命令会创建或重排 role 文本框；之后它们仍是普通自由对象。例如：
+
+```bash
+morrow-presenter element-update talk.morrowdeck 1 @title \
+  --x 12 --y 8 --width 76 --height 18
+morrow-presenter element-update talk.morrowdeck 1 @body \
+  --x 12 --y 34 --width 76 --height 48
+```
+
 
 ## Add and inspect objects
 
@@ -44,6 +52,10 @@ morrow-presenter element-get talk.morrowdeck 2 <id> --json
 
 morrow-presenter element-add-text talk.morrowdeck 2 "Control loss" \
   --x 8 --y 8 --width 40 --height 12 --font-size 30 --font-weight 700
+
+# 可显式赋予标题/正文语义；同一 slide 每种 role 最多一个
+morrow-presenter element-add-text talk.morrowdeck 2 "Result" --role title \
+  --x 8 --y 6 --width 84 --height 14
 
 morrow-presenter element-add-shape talk.morrowdeck 2 \
   --shape rounded-rect --text Watchdog --x 12 --y 34 --width 25 --height 17

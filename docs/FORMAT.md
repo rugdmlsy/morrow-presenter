@@ -28,13 +28,22 @@
   "slides": [
     {
       "id": "slide-id",
-      "layout": "blank",
-      "title": "",
-      "body": "",
+      "layout": "title-body",
       "background": "#f5f8ff",
       "notes": "Speaker-only notes",
       "transition": { "type": "fade", "duration": 0.35 },
-      "elements": []
+      "elements": [
+        {
+          "id": "title-id", "type": "text", "role": "title",
+          "text": "Weekly Update",
+          "x": 8.5, "y": 8.5, "width": 83, "height": 16
+        },
+        {
+          "id": "body-id", "type": "text", "role": "body",
+          "text": "Main points",
+          "x": 8.5, "y": 30, "width": 83, "height": 56
+        }
+      ]
     }
   ]
 }
@@ -55,8 +64,8 @@
 
 ## Slide fields
 
-- `layout`: `title-body`, `title`, `section`, `blank`。
-- `title`, `body`: 兼容的版式占位层文本。
+- `layout`: `title-body`, `title`, `section`, `blank`。它是版式模板提示，用于创建/重排 role 文本框，不是独立文字渲染层。
+- 标题/正文不再是 slide 字段，而是 `elements[]` 中的普通 `text` element。旧文件中的 slide-level `title` / `body` 仅在读取时兼容，并自动迁移。
 - `background`: CSS color string。
 - `notes`: 演讲者备注。
 - `transition.type`: `none` / `fade`。
@@ -65,7 +74,7 @@
 
 ## Component identification overlay
 
-`view.showElementLabels` controls an editor-only identification overlay. Generic elements are labeled with their 1-based position, derived type/name, and the first 8 characters of the stable UUID. Layout placeholders are labeled `@title` and `@body`; those map to the slide `title` and `body` fields rather than `elements[]`. Labels are not rendered in thumbnails, presentation mode, PDF, or PPTX exports. The CLI accepts a unique element-ID prefix of 6 or more characters, so the displayed 8-character ID can be used directly by an agent.
+`view.showElementLabels` controls an editor-only identification overlay. Elements are labeled with their 1-based position, derived type/name, and the first 8 characters of the stable UUID. Text elements whose `role` is `title` or `body` additionally display `@title` or `@body`. These aliases resolve to the same ordinary text elements, so CLI/agents can use them anywhere an element ref is accepted, including `element-update` for geometry. Labels are not rendered in thumbnails, presentation mode, PDF, or PPTX exports.
 
 ## Element common fields
 
@@ -83,7 +92,9 @@
 
 ## Text
 
-`type: text` 额外包含 `text`, `fontFamily`, `fontSize`, `fontWeight`, `italic`, `underline`, `color`, `align`, `verticalAlign`, `fill`, `stroke`, `strokeWidth`, `padding`。
+`type: text` 额外包含 `role`, `text`, `fontFamily`, `fontSize`, `fontWeight`, `italic`, `underline`, `color`, `align`, `verticalAlign`, `fill`, `stroke`, `strokeWidth`, `padding`。
+
+`role` 为 `null`, `"title"`, `"body"`。同一 slide normalize 后最多各有一个 `title` 和一个 `body` role；它只表达文本语义/版式身份，不改变 text element 的对象能力。role 文本框仍使用普通 `x/y/width/height/rotation`，可以自由移动、resize、旋转、分组和调整 z-order。
 
 ## Shape
 

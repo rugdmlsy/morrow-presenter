@@ -23,7 +23,7 @@ morrow-presenter capabilities --json
 
 ### Slides
 
-- `标题 + 正文`、`仅标题`、`章节页`、`空白`四种版式。
+- `标题 + 正文`、`仅标题`、`章节页`、`空白`四种版式模板；模板只负责创建/重排文本框，不使用独立占位渲染层。
 - 新建、复制、删除、拖拽排序。
 - 每页背景色、演讲者备注。
 - `none` / `fade` 基础切换效果。
@@ -33,7 +33,7 @@ morrow-presenter capabilities --json
 
 同一页可放任意数量的：
 
-- 文本框。
+- 文本框；标题/正文也都是普通文本框，只通过 `role: title/body` 标记语义。
 - 图片（PNG/JPEG/GIF/WebP/HEIC/HEIF）。
 - 矩形、圆角矩形、椭圆、直线、箭头。
 - 表格。
@@ -53,7 +53,7 @@ morrow-presenter capabilities --json
 
 ### 组件标识
 
-工具栏“组件标识”开关会在编辑画布上显示浅色标识。普通对象显示 `#序号 · 类型/名称 · 8位短ID`；版式自带的标题/正文占位层显示 `@title` / `@body`。标识只出现在编辑器，不进入缩略图、放映、PDF 或 PPTX。CLI 支持至少 6 位的唯一 UUID 前缀，因此可以直接把画布上的短 ID 交给 agent 定位对象；`@title` / `@body` 分别对应 `set --title` / `set --body`。
+工具栏“组件标识”开关会在编辑画布上显示浅色标识。普通对象显示 `#序号 · 类型/名称 · 8位短ID`；带标题/正文语义的普通文本框额外显示 `@title` / `@body`。标识只出现在编辑器，不进入缩略图、放映、PDF 或 PPTX。CLI 支持至少 6 位的唯一 UUID 前缀，并可直接用 `@title` / `@body` 作为 element ref；例如 `element-update ... @title --x 12 --width 70`。`set --title` / `set --body` 只是修改这两个 role 文本框的便捷别名。
 
 ### 吸附、网格和参考线
 
@@ -66,7 +66,7 @@ morrow-presenter capabilities --json
 
 - 字体、字号、粗体、斜体、下划线、颜色、文本对齐。
 - 填充、无填充、描边、线宽。
-- 双击文本框/形状直接编辑文字。
+- 双击文本框/形状直接编辑文字；标题/正文文本框同样支持拖动、四角 resize、旋转、层级、对齐和组合。
 - 表格单元格双击编辑。
 - 表格增删行列；CLI 还支持指定单元格和指定位置增删行列。
 

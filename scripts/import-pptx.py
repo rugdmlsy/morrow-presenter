@@ -8,7 +8,7 @@ import hashlib,json,sys,uuid
 from pathlib import Path
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE_TYPE, MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE_TYPE, MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.dml import MSO_FILL_TYPE
 
 SLIDE_ASPECT=16/9
@@ -74,13 +74,24 @@ def picture_element(shape,sw,sh,outdeck,group_id=None):
         fw=fh*(iw/ih if iw and ih else SLIDE_ASPECT)/SLIDE_ASPECT; expected=fh
     return {'id':uid(),'type':'image','path':rel,'alt':getattr(shape,'name',''),'x':visx-fw*l,'y':visy-expected*t,'width':fw,'height':expected,'intrinsicWidth':iw,'intrinsicHeight':ih,'crop':{'left':l*100,'top':t*100,'right':r*100,'bottom':b*100},'rotation':float(getattr(shape,'rotation',0) or 0)%360,'opacity':1.0,'locked':False,'groupId':group_id}
 
-def text_element(shape,sw,sh,group_id=None):
+def placeholder_role(shape):
+    try:
+        typ=shape.placeholder_format.type
+        if typ in (PP_PLACEHOLDER.TITLE,PP_PLACEHOLDER.CENTER_TITLE):return 'title'
+        if typ in (PP_PLACEHOLDER.BODY,PP_PLACEHOLDER.SUBTITLE):return 'body'
+    except Exception:pass
+    return None
+
+def text_element(shape,sw,sh,group_id=None,role=None):
+    if role is None:
+        name=getattr(shape,'name','') or ''
+        if name.startswith('MorrowPresenter:') and name.split(':',1)[1] in ('title','body'): role=name.split(':',1)[1]
     c=common(shape,sw,sh,group_id);style=first_text_style(shape);fill='transparent';stroke='transparent';swid=0.0
     try:fill=color_of(shape.fill,'transparent')
     except:pass
     try:stroke=line_color(shape,'transparent');swid=line_width(shape,0.0)
     except:pass
-    return {**c,'type':'text','text':shape.text or '','fill':fill,'stroke':stroke,'strokeWidth':swid,'padding':1.2,**style}
+    return {**c,'type':'text','role':role,'text':shape.text or '','fill':fill,'stroke':stroke,'strokeWidth':swid,'padding':1.2,**style}
 
 def shape_kind(shape):
     try:
@@ -124,7 +135,8 @@ def walk(shapes,sw,sh,outdeck,group_id=None):
             if stype==MSO_SHAPE_TYPE.LINE:out.append(line_element(shape,sw,sh,group_id));continue
             if getattr(shape,'has_chart',False):out.append(fallback_box(shape,sw,sh,'[Chart]',group_id));continue
             if getattr(shape,'has_text_frame',False):
-                if stype in (MSO_SHAPE_TYPE.AUTO_SHAPE,MSO_SHAPE_TYPE.PLACEHOLDER):out.append(auto_shape_element(shape,sw,sh,group_id))
+                if stype==MSO_SHAPE_TYPE.PLACEHOLDER:out.append(text_element(shape,sw,sh,group_id,placeholder_role(shape)))
+                elif stype==MSO_SHAPE_TYPE.AUTO_SHAPE:out.append(auto_shape_element(shape,sw,sh,group_id))
                 else:out.append(text_element(shape,sw,sh,group_id))
                 continue
             out.append(fallback_box(shape,sw,sh,f'[{getattr(shape,"name","Object")}]',group_id))

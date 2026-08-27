@@ -33,14 +33,6 @@ button.active { background: #202124; color: white; border-color: #202124; }
 .slide-thumb.selected { border-color: #202124; }
 .slide-thumb.drag-over { outline: 2px dashed #777; outline-offset: 2px; }
 .thumb-inner { height: 100%; padding: 10px 11px; display: flex; flex-direction: column; justify-content: center; gap: 5px; color: #1f2021; position: relative; overflow: hidden; container-type: inline-size; }
-.thumb-title { font-size: 8px; font-weight: 700; line-height: 1.15; overflow: hidden; max-height: 19px; position: relative; z-index: 2; }
-.thumb-body { font-size: 5px; color: #646668; white-space: pre-wrap; overflow: hidden; max-height: 28px; line-height: 1.3; position: relative; z-index: 2; }
-.thumb-inner.title-body { justify-content: flex-start; padding-top: 14px; }
-.thumb-inner.title-body .thumb-title { font-size: 7px; }
-.thumb-inner.title { align-items: center; text-align: center; }
-.thumb-inner.section { color: white; align-items: center; text-align: center; }
-.thumb-inner.section .thumb-body { color: #d7d7d4; }
-.thumb-inner.blank .thumb-title, .thumb-inner.blank .thumb-body { display: none; }
 
 .editor-area { min-width: 0; display: grid; grid-template-rows: 44px 42px minmax(0,1fr) auto 34px; }
 .editor-toolbar { display: flex; align-items: center; gap: 7px; padding: 0 12px; border-bottom: 1px solid #deded9; background: #fbfbfa; min-width: 0; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
@@ -61,20 +53,6 @@ button.active { background: #202124; color: white; border-color: #202124; }
 .canvas-stage { min-height: 0; overflow: auto; display: grid; place-items: center; padding: 34px; background-color: #ececea; background-image: radial-gradient(#d5d5d0 .7px, transparent .7px); background-size: 12px 12px; }
 .slide-canvas { width: min(1120px, calc((100vh - 260px) * 16/9), calc(100vw - 330px)); aspect-ratio: 16/9; background: #fff; box-shadow: 0 18px 48px rgba(0,0,0,.14); border-radius: 3px; overflow: hidden; position: relative; }
 .slide-content, .present-content { width: 100%; height: 100%; position: relative; overflow: hidden; container-type: inline-size; color: #191a1b; }
-.placeholder-layer { position: absolute; inset: 0; z-index: 2; padding: 8.2% 8.5%; display: flex; pointer-events: auto; }
-.slide-text.title-body, .present-text.title-body { flex-direction: column; justify-content: flex-start; gap: 7%; }
-.slide-content.title-body .placeholder-layer, .present-content.title-body .placeholder-layer { flex-direction: column; justify-content: flex-start; gap: 7%; }
-.slide-content.title .placeholder-layer, .present-content.title .placeholder-layer { justify-content: center; align-items: center; text-align: center; }
-.slide-content.section .placeholder-layer, .present-content.section .placeholder-layer { justify-content: center; align-items: center; text-align: center; flex-direction: column; gap: 4%; color: #fff; }
-.slide-content.blank .placeholder-layer, .present-content.blank .placeholder-layer { display: none; }
-.slide-content textarea { width: 100%; resize: none; overflow: hidden; border: 1px solid transparent; background: transparent; outline: none; color: inherit; padding: 4px; border-radius: 5px; }
-.slide-content textarea:hover, .slide-content textarea:focus { border-color: rgba(100,100,100,.25); background: rgba(255,255,255,.18); }
-.slide-title-input { font-size: clamp(24px,3.2vw,54px); font-weight: 750; line-height: 1.06; letter-spacing: -.035em; min-height: 1.25em; }
-.slide-body-input { font-size: clamp(15px,1.55vw,28px); line-height: 1.45; min-height: 6em; color: #54575a !important; }
-.slide-content.title .slide-title-input, .slide-content.section .slide-title-input { text-align: center; font-size: clamp(30px,4vw,68px); }
-.slide-content.section .slide-body-input { text-align: center; min-height: 2.2em; color: #d3d3cf !important; }
-.slide-content.title .slide-body-input { display: none; }
-
 /* Generic PowerPoint-like object layer */
 .slide-element { position: absolute; transform-origin: center center; user-select: none; touch-action: none; border-style: solid; border-color: transparent; border-width: 0; }
 .slide-element.locked::after { content: "🔒"; position: absolute; right: 2px; top: 2px; font-size: 10px; opacity: .55; z-index: 20; }
@@ -86,6 +64,9 @@ button.active { background: #202124; color: white; border-color: #202124; }
 .crop-ghost { opacity: .16; clip-path: none !important; }
 .object-text-content { width: 100%; height: 100%; display: flex; flex-direction: column; white-space: pre-wrap; overflow: hidden; outline: none; user-select: none; cursor: default; position: relative; z-index: 3; line-height: 1.2; }
 .object-text-content.editing { user-select: text; cursor: text; overflow: auto; background: rgba(255,255,255,.08); }
+.object-text-content.empty::before { content: attr(data-placeholder); color: rgba(100,102,106,.42); font-weight: 450; pointer-events: none; }
+.element-text:hover { outline: 1px dashed rgba(70,80,100,.22); outline-offset: 1px; }
+#text-role { min-width: 80px; }
 .shape-visual { position: absolute; inset: 0; border-style: solid; z-index: 1; }
 .shape-rounded-rect { border-radius: 18%; }
 .shape-ellipse { border-radius: 50%; }
@@ -120,11 +101,6 @@ button.active { background: #202124; color: white; border-color: #202124; }
 .presentation { position: fixed; inset: 0; z-index: 100; background: #080808; color: #fff; display: grid; place-items: center; }
 .presentation[hidden] { display: none; }
 .presentation-slide { width: 100vw; height: 56.25vw; max-height: 100vh; max-width: 177.7778vh; background: #fff; color: #191a1b; overflow: hidden; }
-.present-content .placeholder-layer { padding: 8.2% 8.5%; }
-.present-title { white-space: pre-wrap; font-size: clamp(30px,4.2vw,76px); line-height: 1.06; font-weight: 760; letter-spacing: -.035em; }
-.present-body { margin-top: 0; white-space: pre-wrap; font-size: clamp(18px,2vw,36px); line-height: 1.45; color: #55595c; }
-.present-content.title .present-title, .present-content.section .present-title { font-size: clamp(36px,5vw,90px); }
-.present-content.section .present-body { color: #d0d0cc; }
 .transition-fade { animation-name: presenter-fade; animation-timing-function: ease-out; }
 @keyframes presenter-fade { from { opacity: 0; } to { opacity: 1; } }
 .presentation-close { position: fixed; top: 16px; right: 16px; width: 38px; height: 38px; border-radius: 999px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.45); color: #fff; font-size: 25px; line-height: 1; opacity: .35; }
