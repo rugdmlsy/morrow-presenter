@@ -151,9 +151,9 @@ button.active { background: #202124; color: white; border-color: #202124; }
 .marquee-box { position: absolute; z-index: 60; border: 1px solid #2d6cdf; background: rgba(45,108,223,.09); pointer-events: none; }
 
 .element-id-label {
-  position: absolute; z-index: 80; max-width: 42%; padding: 2px 5px; border-radius: 4px;
-  background: rgba(20,22,26,.62); color: rgba(255,255,255,.86);
-  border: 1px solid rgba(255,255,255,.16); box-shadow: 0 1px 3px rgba(0,0,0,.16);
+  position: absolute; z-index: 80; max-width: 42%; padding: 1px 2px;
+  background: transparent; color: rgba(82,86,94,.66);
+  border: 0; box-shadow: none;
   font: 500 clamp(8px, .72cqw, 11px)/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; user-select: none;
 }
