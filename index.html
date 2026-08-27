@@ -11,6 +11,8 @@
     <div class="brand">Morrow Presenter</div>
     <input id="deck-title" class="deck-title" value="Untitled deck" aria-label="Deck title" />
     <div class="top-actions">
+      <button id="undo" class="ghost" title="撤销 ⌘Z">↶</button>
+      <button id="redo" class="ghost" title="重做 ⇧⌘Z">↷</button>
       <button id="new-deck" class="ghost">新建</button>
       <button id="open-deck" class="ghost">打开</button>
       <button id="save-deck" class="ghost">保存</button>
@@ -30,36 +32,88 @@
     </aside>
 
     <section class="editor-area">
-      <div class="editor-toolbar">
-        <label>
-          布局
+      <div class="editor-toolbar main-toolbar">
+        <label>布局
           <select id="layout-select">
             <option value="title-body">标题 + 正文</option>
             <option value="title">仅标题</option>
             <option value="section">章节页</option>
+            <option value="blank">空白</option>
           </select>
         </label>
-        <button id="choose-image" class="ghost">添加图片</button>
-        <div id="image-controls" class="image-controls" hidden>
-          <button id="image-crop-toggle" class="ghost" title="用遮罩裁切，不修改原图">裁切</button>
-          <button id="image-crop-reset" class="ghost" title="清除裁切遮罩">重置裁切</button>
-          <span id="image-geometry" class="image-geometry" title="图片在 slide 中的坐标和完整宽度"></span>
-          <input id="image-alt" class="image-alt" type="text" placeholder="图片说明" aria-label="图片说明" />
-          <button id="remove-image" class="danger-ghost">移除图片</button>
-        </div>
+        <button id="insert-text" class="ghost">文本框</button>
+        <select id="shape-kind" aria-label="形状类型" title="形状类型">
+          <option value="rect">矩形</option>
+          <option value="rounded-rect">圆角矩形</option>
+          <option value="ellipse">椭圆</option>
+          <option value="line">直线</option>
+          <option value="arrow">箭头</option>
+        </select>
+        <button id="insert-shape" class="ghost">形状</button>
+        <button id="choose-image" class="ghost">图片</button>
+        <label class="compact-label" title="Slide 背景">背景 <input id="slide-background" type="color" value="#ffffff" /></label>
+        <select id="slide-transition" aria-label="切换效果" title="切换效果">
+          <option value="none">无切换</option>
+          <option value="fade">淡入</option>
+        </select>
+        <button id="toggle-notes" class="ghost">备注</button>
         <div class="toolbar-spacer"></div>
-        <button id="duplicate-slide" class="ghost">复制</button>
-        <button id="delete-slide" class="danger-ghost">删除</button>
+        <button id="duplicate-slide" class="ghost">复制页</button>
+        <button id="delete-slide" class="danger-ghost">删除页</button>
+      </div>
+
+      <div id="object-toolbar" class="editor-toolbar object-toolbar">
+        <span id="selection-count" class="selection-count">未选择对象</span>
+        <select id="font-family" title="字体" aria-label="字体">
+          <option value="Inter">Inter</option>
+          <option value="Arial">Arial</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+        </select>
+        <input id="font-size" class="number-control" type="number" min="4" max="300" step="1" value="28" title="字号" aria-label="字号" />
+        <button id="text-bold" class="format-button" title="粗体 ⌘B"><b>B</b></button>
+        <button id="text-italic" class="format-button" title="斜体 ⌘I"><i>I</i></button>
+        <button id="text-underline" class="format-button" title="下划线 ⌘U"><u>U</u></button>
+        <select id="text-align" title="文本对齐" aria-label="文本对齐">
+          <option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option>
+        </select>
+        <label class="color-control" title="文字颜色">A <input id="text-color" type="color" value="#202124" /></label>
+        <label class="color-control" title="填充颜色">填 <input id="object-fill" type="color" value="#e8e8e4" /></label>
+        <button id="no-fill" class="compact-button" title="无填充">无填充</button>
+        <label class="color-control" title="边框颜色">线 <input id="object-stroke" type="color" value="#4b4d50" /></label>
+        <button id="no-stroke" class="compact-button" title="无边框">无线</button>
+        <input id="stroke-width" class="number-control narrow" type="number" min="0" max="20" step="0.5" value="1.5" title="线宽" aria-label="线宽" />
+        <input id="rotation" class="number-control narrow" type="number" step="1" value="0" title="旋转角度" aria-label="旋转角度" />
+        <input id="opacity" class="number-control narrow" type="number" min="0" max="100" step="5" value="100" title="透明度 %" aria-label="透明度" />
+        <button id="crop-toggle" class="compact-button" title="非破坏性裁切">裁切</button>
+        <button id="crop-reset" class="compact-button" title="重置裁切">重置</button>
+        <select id="object-order" title="层级" aria-label="层级">
+          <option value="">层级</option><option value="front">置于顶层</option><option value="forward">上移一层</option><option value="backward">下移一层</option><option value="back">置于底层</option>
+        </select>
+        <select id="object-align" title="对齐/分布" aria-label="对齐/分布">
+          <option value="">对齐</option><option value="left">左</option><option value="center">水平居中</option><option value="right">右</option><option value="top">顶端</option><option value="middle">垂直居中</option><option value="bottom">底端</option><option value="distribute-h">水平分布</option><option value="distribute-v">垂直分布</option>
+        </select>
+        <button id="lock-object" class="compact-button" title="锁定/解锁">锁定</button>
+        <button id="duplicate-object" class="compact-button" title="复制对象 ⌘D">复制对象</button>
+        <button id="delete-object" class="danger-ghost compact-button" title="删除对象">删除对象</button>
       </div>
 
       <div class="canvas-stage">
         <div id="slide-canvas" class="slide-canvas" aria-label="Slide editor"></div>
       </div>
 
+      <div id="notes-panel" class="notes-panel" hidden>
+        <span>演讲者备注</span>
+        <textarea id="slide-notes" placeholder="仅演讲者可见的备注…"></textarea>
+      </div>
+
       <div class="statusbar">
         <span id="save-status">未保存 · ⌘S 保存</span>
+        <span id="object-status"></span>
         <span id="slide-position"></span>
-        <span class="shortcut-hint">⌘⇧N 新增 · ⌘D 复制 · ⌘↵ 放映</span>
+        <span class="shortcut-hint">⇧/⌘ 多选 · ⌘C/V · ⌘D · Delete · ⌘Z · ⌘↵ 放映</span>
       </div>
     </section>
   </main>

@@ -1,62 +1,115 @@
 # `.morrowdeck` format
 
-A `.morrowdeck` file is UTF-8 JSON. Version 1 is intentionally simple and diff-friendly.
+`.morrowdeck` 是 UTF-8 JSON。Version 1 保持可读、可 diff，并允许旧 deck 在 normalize 时自动迁移。
 
 ```json
 {
   "version": 1,
-  "title": "Weekly Research Update",
-  "selectedId": "8a40c50d-2a60-42a0-b2c3-574f46c3da83",
+  "title": "Weekly Update",
+  "selectedId": "slide-id",
   "slides": [
     {
-      "id": "8a40c50d-2a60-42a0-b2c3-574f46c3da83",
-      "layout": "title-body",
-      "title": "Reliable agents need recovery",
+      "id": "slide-id",
+      "layout": "blank",
+      "title": "",
       "body": "",
-      "image": {
-        "path": ".morrow-assets/4566b637ae298d756c193d3e.jpg",
-        "alt": "Architecture",
-        "x": 52.0,
-        "y": 18.0,
-        "width": 38.0,
-        "height": 50.67,
-        "intrinsicWidth": 640.0,
-        "intrinsicHeight": 480.0,
-        "crop": { "left": 8.0, "top": 4.0, "right": 12.0, "bottom": 0.0 }
-      }
+      "background": "#f7f7f8",
+      "notes": "Speaker-only notes",
+      "transition": { "type": "fade", "duration": 0.35 },
+      "elements": [
+        {
+          "id": "text-id",
+          "type": "text",
+          "text": "Architecture",
+          "x": 8, "y": 8, "width": 42, "height": 12,
+          "rotation": 0, "opacity": 1, "locked": false,
+          "fontFamily": "Inter", "fontSize": 32, "fontWeight": 700,
+          "italic": false, "underline": false,
+          "color": "#202124", "align": "left", "verticalAlign": "top",
+          "fill": "transparent", "stroke": "transparent", "strokeWidth": 0,
+          "padding": 1.2
+        },
+        {
+          "id": "shape-id",
+          "type": "shape",
+          "shape": "rounded-rect",
+          "text": "Agent",
+          "x": 12, "y": 32, "width": 24, "height": 16,
+          "rotation": 0, "opacity": 1, "locked": false,
+          "fill": "#e8e8e4", "stroke": "#4b4d50", "strokeWidth": 1.5,
+          "fontFamily": "Inter", "fontSize": 20, "fontWeight": 400,
+          "italic": false, "underline": false,
+          "color": "#202124", "align": "center", "verticalAlign": "middle"
+        },
+        {
+          "id": "image-id",
+          "type": "image",
+          "path": ".morrow-assets/4566b637ae298d756c193d3e.jpg",
+          "alt": "Architecture diagram",
+          "x": 55, "y": 18, "width": 36, "height": 48,
+          "intrinsicWidth": 640, "intrinsicHeight": 480,
+          "crop": { "left": 6, "top": 0, "right": 10, "bottom": 0 },
+          "rotation": 0, "opacity": 1, "locked": false
+        }
+      ]
     }
   ]
 }
 ```
 
-Fields:
+## Slide fields
 
-- `version`: currently `1`.
-- `title`: deck title.
-- `selectedId`: UI selection hint. It must reference a slide ID; invalid values are normalized to the first slide.
-- `slides`: non-empty ordered slide array.
-- `slides[].id`: stable unique string. The CLI uses UUIDs.
-- `slides[].layout`: `title-body`, `title`, or `section`.
-- `slides[].title`: UTF-8 string.
-- `slides[].body`: UTF-8 string; newlines are preserved.
-- `slides[].image`: optional free-positioned image element for the slide.
-  - `path`: relative asset path. Presenter-managed assets live under `.morrow-assets/`; absolute paths and `..` are rejected.
-  - `alt`: accessibility/agent description.
-  - `x`, `y`: origin of the full uncropped image box, as percentages of slide width/height. Values may be outside `0..100` when the underlying image extends beyond the visible slide.
-  - `width`, `height`: size of the full uncropped image box, also in slide-relative percentages. Presenter preserves source aspect ratio; interactive or shell resizing changes both proportionally.
-  - `intrinsicWidth`, `intrinsicHeight`: source pixel dimensions used to maintain the aspect ratio.
-  - `crop.left`, `crop.top`, `crop.right`, `crop.bottom`: non-destructive mask insets, each expressed as a percent of the full image box. Opposing insets are normalized to leave at least 5% visible.
+- `layout`: `title-body`, `title`, `section`, `blank`.
+- `title`, `body`: 兼容的版式占位层文本。
+- `background`: CSS color string；GUI 颜色选择器主要产生 `#rrggbb`。
+- `notes`: 演讲者备注，不在普通放映画面中显示。
+- `transition.type`: `none` 或 `fade`。
+- `transition.duration`: 秒。
+- `elements`: 按数组顺序从后到前渲染；后面的 element 位于更高层。
 
-## Image assets
+## Element common fields
 
-Images are files, not base64 embedded in JSON. Position, proportional size, intrinsic dimensions, and crop-mask state are stored in the deck JSON. `morrow-presenter image-set` copies the source into a sibling `.morrow-assets/` directory using a content-hash filename, so repeated imports are deduplicated. Supported MVP formats are PNG, JPEG, GIF, WebP, HEIC and HEIF.
+所有 element 都有：
 
-When `morrow-presenter export` writes a deck to another directory, referenced image assets are copied with it. Moving a deck manually should therefore move its `.morrow-assets/` directory as well.
+- `id`: 稳定唯一 ID。
+- `type`: `text`, `shape`, `image`。
+- `x`, `y`: 对象左上角，单位是 slide 宽/高百分比。
+- `width`, `height`: 对象完整 bounding box，相同百分比坐标系。
+- `rotation`: 度数。
+- `opacity`: `0..1`。
+- `locked`: GUI 中锁定后禁止拖动/缩放/旋转。
 
-The CLI normalizes malformed optional fields and refuses structurally invalid decks. Use the live machine-readable schema when generating files:
+坐标允许暂时超出 `0..100`，因此对象可以部分位于 slide 外侧。
+
+## Text elements
+
+额外字段：`text`, `fontFamily`, `fontSize`, `fontWeight`, `italic`, `underline`, `color`, `align`, `verticalAlign`, `fill`, `stroke`, `strokeWidth`, `padding`。
+
+## Shape elements
+
+`shape` 支持：`rect`, `rounded-rect`, `ellipse`, `line`, `arrow`。形状还可拥有 `text` 和与 text element 相同的文本样式。
+
+## Image elements
+
+- `path`: 安全相对路径。Presenter 管理的资源位于 `.morrow-assets/`。
+- `intrinsicWidth`, `intrinsicHeight`: 原图像素尺寸。
+- 图片缩放保持原始宽高比，因此 `height` 会从 `width + intrinsic dimensions` 重新规范化。
+- `crop.left/top/right/bottom`: 完整图片框内部的非破坏性遮罩百分比。相对两侧会规范化为至少保留 5% 可见区域。
+- 图片文件本身不会因为 crop/resize/rotate 被重编码。
+
+多个 image element 可以引用同一个 content-hash asset；这不会复制文件。
+
+## Assets and export
+
+图片不是 base64 内嵌数据。`element-add-image` 会把已有图片复制到 deck 旁的 `.morrow-assets/`，按 SHA-256 前缀命名去重。支持 PNG/JPEG/GIF/WebP/HEIC/HEIF。
+
+`morrow-presenter export` 和 Mac App 的另存为会复制 `elements[]` 中所有被引用的图片资源。旧的 `slides[].image` 也会在读取时自动迁移成一个 `type=image` element。
+
+## Machine-readable schema
 
 ```bash
 morrow-presenter schema --json
+morrow-presenter capabilities --json
 ```
 
-Prefer the CLI for mutations instead of editing JSON with ad-hoc scripts because the CLI preserves IDs, validates slide references, writes atomically, and keeps the format normalized.
+推荐通过 CLI 修改，而不是用临时脚本直接写 JSON：CLI 会保持 ID、规范化字段、原子写入文件、检查 asset 路径和 slide/element reference。

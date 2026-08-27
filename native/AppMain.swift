@@ -125,6 +125,18 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         fileMenu.addItem(menuItem("Save", key: "s", modifiers: [.command], action: #selector(menuSave)))
         fileMenu.addItem(menuItem("Save As…", key: "S", modifiers: [.command, .shift], action: #selector(menuSaveAs)))
 
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(menuItem("Undo", key: "z", modifiers: [.command], action: #selector(menuUndo)))
+        editMenu.addItem(menuItem("Redo", key: "z", modifiers: [.command, .shift], action: #selector(menuRedo)))
+        editMenu.addItem(.separator())
+        editMenu.addItem(menuItem("Cut", key: "x", modifiers: [.command], action: #selector(menuCut)))
+        editMenu.addItem(menuItem("Copy", key: "c", modifiers: [.command], action: #selector(menuCopy)))
+        editMenu.addItem(menuItem("Paste", key: "v", modifiers: [.command], action: #selector(menuPaste)))
+        editMenu.addItem(menuItem("Select All", key: "a", modifiers: [.command], action: #selector(menuSelectAll)))
+
         let presentationItem = NSMenuItem()
         main.addItem(presentationItem)
         let presentationMenu = NSMenu(title: "Presentation")
@@ -145,6 +157,12 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
     @objc private func menuOpen() { showOpenPanel() }
     @objc private func menuSave() { evaluate("window.presenterMenuAction?.('save')") }
     @objc private func menuSaveAs() { evaluate("window.presenterMenuAction?.('saveAs')") }
+    @objc private func menuUndo() { evaluate("window.presenterMenuAction?.('undo')") }
+    @objc private func menuRedo() { evaluate("window.presenterMenuAction?.('redo')") }
+    @objc private func menuCut() { evaluate("window.presenterMenuAction?.('cut')") }
+    @objc private func menuCopy() { evaluate("window.presenterMenuAction?.('copy')") }
+    @objc private func menuPaste() { evaluate("window.presenterMenuAction?.('paste')") }
+    @objc private func menuSelectAll() { evaluate("window.presenterMenuAction?.('selectAll')") }
     @objc private func menuPresent() { evaluate("window.presenterMenuAction?.('present')") }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -162,6 +180,9 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
                 loadDeck(url: url, present: present, slideRef: slide)
             } else {
                 sendDocumentContext(path: nil)
+                if ProcessInfo.processInfo.environment["MORROW_PRESENTER_DIAGNOSTIC_SELFTEST"] == "1" {
+                    evaluate("window.presenterDiagnosticSelfTest?.()")
+                }
             }
         case "open":
             showOpenPanel()
@@ -189,6 +210,8 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
             if let path = payload["path"] as? String { diagnostic("rendered \(path)") }
         case "runtimeError":
             if let message = payload["message"] as? String { diagnostic("js-error \(message)") }
+        case "diagnostic":
+            if let message = payload["message"] as? String { diagnostic(message) }
         case "presentStart":
             enterFullscreenIfNeeded()
         case "presentEnd":
@@ -355,8 +378,21 @@ final class PresenterApp: NSObject, NSApplicationDelegate, WKScriptMessageHandle
         let targetBase = targetDeck.deletingLastPathComponent().standardizedFileURL
         if sourceBase == targetBase { return }
         guard let object = deck as? [String: Any], let slides = object["slides"] as? [[String: Any]] else { return }
+
+        var paths = Set<String>()
         for slide in slides {
-            guard let image = slide["image"] as? [String: Any], let path = image["path"] as? String else { continue }
+            // Legacy single-image decks are still portable during migration.
+            if let image = slide["image"] as? [String: Any], let path = image["path"] as? String {
+                paths.insert(path)
+            }
+            if let elements = slide["elements"] as? [[String: Any]] {
+                for element in elements where (element["type"] as? String) == "image" {
+                    if let path = element["path"] as? String { paths.insert(path) }
+                }
+            }
+        }
+
+        for path in paths {
             let source = try resolvedAssetURL(relativePath: path, deckURL: sourceDeck)
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
             let target = try resolvedAssetURL(relativePath: path, deckURL: targetDeck)

@@ -7,6 +7,7 @@ without GUI automation or MCP.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -18,7 +19,13 @@ import tempfile
 import uuid
 
 VERSION = 1
-VALID_LAYOUTS = ("title-body", "title", "section")
+VALID_LAYOUTS = ("title-body", "title", "section", "blank")
+VALID_ELEMENT_TYPES = ("text", "shape", "image")
+VALID_SHAPES = ("rect", "rounded-rect", "ellipse", "line", "arrow")
+VALID_ALIGN = ("left", "center", "right")
+VALID_VALIGN = ("top", "middle", "bottom")
+VALID_TRANSITIONS = ("none", "fade")
+VALID_ALIGN_MODES = ("left", "center", "right", "top", "middle", "bottom", "distribute-h", "distribute-v")
 SLIDE_ASPECT = 16 / 9
 DEFAULT_IMAGE_WIDTH = 40.0
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"}
@@ -36,6 +43,24 @@ def _number(value: object, default: float) -> float:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _bool(value: object, default: bool = False) -> bool:
+    return value if isinstance(value, bool) else default
+
+
+def _string(value: object, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def _safe_asset_path(path: object) -> str:
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("image path must be a non-empty relative path")
+    path = path.replace("\\", "/")
+    candidate = Path(path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError("image path must stay inside the deck directory")
+    return path
 
 
 def image_height_for_width(width: float, intrinsic_width: float, intrinsic_height: float) -> float:
@@ -56,57 +81,139 @@ def normalize_crop(raw: object) -> dict:
     return {"left": left, "top": top, "right": right, "bottom": bottom}
 
 
-def normalize_image(raw: object) -> dict | None:
+def normalize_transition(raw: object) -> dict:
+    if isinstance(raw, str):
+        raw = {"type": raw}
+    raw = raw if isinstance(raw, dict) else {}
+    kind = raw.get("type") if raw.get("type") in VALID_TRANSITIONS else "none"
+    duration = _clamp(_number(raw.get("duration"), 0.35), 0.05, 5.0)
+    return {"type": kind, "duration": duration}
+
+
+def element_common(raw: dict, *, default_width: float, default_height: float) -> dict:
+    return {
+        "id": raw.get("id") if isinstance(raw.get("id"), str) and raw.get("id") else str(uuid.uuid4()),
+        "x": _clamp(_number(raw.get("x"), 10.0), -300.0, 300.0),
+        "y": _clamp(_number(raw.get("y"), 10.0), -300.0, 300.0),
+        "width": _clamp(_number(raw.get("width"), default_width), 0.5, 400.0),
+        "height": _clamp(_number(raw.get("height"), default_height), 0.5, 400.0),
+        "rotation": _number(raw.get("rotation"), 0.0) % 360.0,
+        "opacity": _clamp(_number(raw.get("opacity"), 1.0), 0.0, 1.0),
+        "locked": _bool(raw.get("locked"), False),
+    }
+
+
+def normalize_image_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("image element must be an object")
+    path = _safe_asset_path(raw.get("path"))
+    iw = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
+    ih = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
+    width = _clamp(_number(raw.get("width"), DEFAULT_IMAGE_WIDTH), 1.0, 400.0)
+    height = image_height_for_width(width, iw, ih)
+    common = element_common(raw, default_width=width, default_height=height)
+    common["width"] = width
+    common["height"] = height
+    return {
+        "id": common["id"], "type": "image",
+        "path": path,
+        "alt": _string(raw.get("alt")),
+        "x": common["x"], "y": common["y"], "width": width, "height": height,
+        "intrinsicWidth": iw, "intrinsicHeight": ih,
+        "crop": normalize_crop(raw.get("crop")),
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+    }
+
+
+def normalize_text_style(raw: dict) -> dict:
+    align = raw.get("align") if raw.get("align") in VALID_ALIGN else "left"
+    valign = raw.get("verticalAlign") if raw.get("verticalAlign") in VALID_VALIGN else "top"
+    return {
+        "fontFamily": _string(raw.get("fontFamily"), "Inter"),
+        "fontSize": _clamp(_number(raw.get("fontSize"), 28.0), 4.0, 300.0),
+        "fontWeight": int(_clamp(_number(raw.get("fontWeight"), 400.0), 100.0, 900.0)),
+        "italic": _bool(raw.get("italic")),
+        "underline": _bool(raw.get("underline")),
+        "color": _string(raw.get("color"), "#202124"),
+        "align": align,
+        "verticalAlign": valign,
+    }
+
+
+def normalize_text_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("text element must be an object")
+    common = element_common(raw, default_width=35.0, default_height=18.0)
+    return {
+        "id": common["id"], "type": "text",
+        "text": _string(raw.get("text")),
+        "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+        "fill": _string(raw.get("fill"), "transparent"),
+        "stroke": _string(raw.get("stroke"), "transparent"),
+        "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 0.0), 0.0, 20.0),
+        "padding": _clamp(_number(raw.get("padding"), 1.2), 0.0, 20.0),
+        **normalize_text_style(raw),
+    }
+
+
+def normalize_shape_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("shape element must be an object")
+    shape = raw.get("shape") if raw.get("shape") in VALID_SHAPES else "rect"
+    common = element_common(raw, default_width=25.0, default_height=18.0)
+    return {
+        "id": common["id"], "type": "shape", "shape": shape,
+        "text": _string(raw.get("text")),
+        "x": common["x"], "y": common["y"], "width": common["width"], "height": common["height"],
+        "rotation": common["rotation"], "opacity": common["opacity"], "locked": common["locked"],
+        "fill": _string(raw.get("fill"), "#e8e8e4"),
+        "stroke": _string(raw.get("stroke"), "#4b4d50"),
+        "strokeWidth": _clamp(_number(raw.get("strokeWidth"), 1.5), 0.0, 20.0),
+        **normalize_text_style({**raw, "fontSize": raw.get("fontSize", 20.0), "verticalAlign": raw.get("verticalAlign", "middle"), "align": raw.get("align", "center")}),
+    }
+
+
+def normalize_element(raw: object) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("slide element must be an object")
+    kind = raw.get("type")
+    if kind is None and raw.get("path"):
+        kind = "image"
+    if kind == "image":
+        return normalize_image_element(raw)
+    if kind == "text":
+        return normalize_text_element(raw)
+    if kind == "shape":
+        return normalize_shape_element(raw)
+    raise ValueError(f"unsupported element type: {kind!r}")
+
+
+def legacy_image_element(raw: object) -> dict | None:
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise ValueError("slide.image must be an object")
-    path = raw.get("path")
-    if not isinstance(path, str) or not path.strip():
-        raise ValueError("slide.image.path must be a non-empty relative path")
-    path = path.replace("\\", "/")
-    candidate = Path(path)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        raise ValueError("slide.image.path must stay inside the deck directory")
-
-    intrinsic_width = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
-    intrinsic_height = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
-
-    # Migrate v1 fixed-placement images into a reasonable free-positioned box.
+    migrated = dict(raw)
+    migrated["type"] = "image"
+    iw = max(1.0, _number(raw.get("intrinsicWidth"), 16.0))
+    ih = max(1.0, _number(raw.get("intrinsicHeight"), 9.0))
     placement = raw.get("placement")
     if "x" not in raw and placement in {"right", "left", "background", "full"}:
-        if placement == "right":
-            width, x = 40.0, 55.0
-        elif placement == "left":
-            width, x = 40.0, 5.0
-        else:
-            width, x = 100.0, 0.0
-        height = image_height_for_width(width, intrinsic_width, intrinsic_height)
-        y = (100.0 - height) / 2.0
-    else:
-        width = _clamp(_number(raw.get("width"), DEFAULT_IMAGE_WIDTH), 1.0, 400.0)
-        height = image_height_for_width(width, intrinsic_width, intrinsic_height)
-        x = _clamp(_number(raw.get("x"), 50.0), -300.0, 300.0)
-        y = _clamp(_number(raw.get("y"), (100.0 - height) / 2.0), -300.0, 300.0)
+        if placement == "right": width, x = 40.0, 55.0
+        elif placement == "left": width, x = 40.0, 5.0
+        else: width, x = 100.0, 0.0
+        height = image_height_for_width(width, iw, ih)
+        migrated.update({"x": x, "y": (100.0-height)/2.0, "width": width, "height": height})
+    return normalize_image_element(migrated)
 
+
+def slide(title: str = "", body: str = "", layout: str = "title-body") -> dict:
     return {
-        "path": path,
-        "alt": raw.get("alt") if isinstance(raw.get("alt"), str) else "",
-        "x": x,
-        "y": y,
-        "width": width,
-        "height": height,
-        "intrinsicWidth": intrinsic_width,
-        "intrinsicHeight": intrinsic_height,
-        "crop": normalize_crop(raw.get("crop")),
+        "id": str(uuid.uuid4()), "layout": layout, "title": title, "body": body,
+        "background": "#202124" if layout == "section" else "#ffffff",
+        "notes": "", "transition": {"type": "none", "duration": 0.35}, "elements": [],
     }
-
-
-def slide(title: str = "", body: str = "", layout: str = "title-body", image: dict | None = None) -> dict:
-    item = {"id": str(uuid.uuid4()), "layout": layout, "title": title, "body": body}
-    if image is not None:
-        item["image"] = normalize_image(image)
-    return item
 
 
 def new_deck(title: str = "Untitled deck") -> dict:
@@ -120,30 +227,45 @@ def normalize(candidate: object) -> dict:
     raw_slides = candidate.get("slides")
     if not isinstance(raw_slides, list) or not raw_slides:
         raise ValueError("deck.slides must be a non-empty array")
-
-    seen: set[str] = set()
+    seen_slides: set[str] = set()
     slides: list[dict] = []
     for index, raw in enumerate(raw_slides, 1):
         if not isinstance(raw, dict):
             raise ValueError(f"slide {index} must be an object")
         sid = raw.get("id") if isinstance(raw.get("id"), str) and raw.get("id") else str(uuid.uuid4())
-        if sid in seen:
+        if sid in seen_slides:
             sid = str(uuid.uuid4())
-        seen.add(sid)
+        seen_slides.add(sid)
         layout = raw.get("layout") if raw.get("layout") in VALID_LAYOUTS else "title-body"
-        item = {
+        elements: list[dict] = []
+        seen_elements: set[str] = set()
+        raw_elements = raw.get("elements") if isinstance(raw.get("elements"), list) else []
+        for raw_element in raw_elements:
+            element = normalize_element(raw_element)
+            if element["id"] in seen_elements:
+                element["id"] = str(uuid.uuid4())
+            seen_elements.add(element["id"])
+            elements.append(element)
+        legacy = legacy_image_element(raw.get("image"))
+        if legacy is not None:
+            duplicate = any(e.get("type") == "image" and e.get("path") == legacy.get("path") and abs(e.get("x",0)-legacy.get("x",0)) < .001 and abs(e.get("y",0)-legacy.get("y",0)) < .001 for e in elements)
+            if not duplicate:
+                if legacy["id"] in seen_elements:
+                    legacy["id"] = str(uuid.uuid4())
+                elements.append(legacy)
+        default_background = "#202124" if layout == "section" else "#ffffff"
+        slides.append({
             "id": sid,
             "layout": layout,
-            "title": raw.get("title") if isinstance(raw.get("title"), str) else "",
-            "body": raw.get("body") if isinstance(raw.get("body"), str) else "",
-        }
-        image = normalize_image(raw.get("image"))
-        if image is not None:
-            item["image"] = image
-        slides.append(item)
-
+            "title": _string(raw.get("title")),
+            "body": _string(raw.get("body")),
+            "background": _string(raw.get("background"), default_background),
+            "notes": _string(raw.get("notes")),
+            "transition": normalize_transition(raw.get("transition")),
+            "elements": elements,
+        })
     selected = candidate.get("selectedId")
-    if selected not in seen:
+    if selected not in seen_slides:
         selected = slides[0]["id"]
     title = candidate.get("title") if isinstance(candidate.get("title"), str) and candidate.get("title").strip() else "Untitled deck"
     return {"version": VERSION, "title": title, "selectedId": selected, "slides": slides}
@@ -201,22 +323,23 @@ def import_asset(deck_path: Path, source: Path) -> str:
 def image_dimensions(source: Path) -> tuple[float, float]:
     source = source.expanduser().resolve()
     try:
-        proc = subprocess.run(
-            ["/usr/bin/sips", "-g", "pixelWidth", "-g", "pixelHeight", str(source)],
-            check=True, capture_output=True, text=True, timeout=10,
-        )
+        proc = subprocess.run(["/usr/bin/sips", "-g", "pixelWidth", "-g", "pixelHeight", str(source)], check=True, capture_output=True, text=True, timeout=10)
         width = height = None
         for line in proc.stdout.splitlines():
             line = line.strip()
-            if line.startswith("pixelWidth:"):
-                width = float(line.split(":", 1)[1].strip())
-            elif line.startswith("pixelHeight:"):
-                height = float(line.split(":", 1)[1].strip())
-        if width and height:
-            return width, height
+            if line.startswith("pixelWidth:"): width = float(line.split(":", 1)[1].strip())
+            elif line.startswith("pixelHeight:"): height = float(line.split(":", 1)[1].strip())
+        if width and height: return width, height
     except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
     return 16.0, 9.0
+
+
+def image_elements(deck: dict):
+    for item in deck["slides"]:
+        for element in item.get("elements", []):
+            if element.get("type") == "image":
+                yield element
 
 
 def copy_assets(deck: dict, source_deck: Path, target_deck: Path) -> None:
@@ -224,10 +347,7 @@ def copy_assets(deck: dict, source_deck: Path, target_deck: Path) -> None:
     target_base = target_deck.expanduser().resolve().parent
     if source_base == target_base:
         return
-    for item in deck["slides"]:
-        image = item.get("image")
-        if not image:
-            continue
+    for image in image_elements(deck):
         rel = image["path"]
         source = asset_file(source_deck, rel)
         if not source.is_file():
@@ -239,442 +359,399 @@ def copy_assets(deck: dict, source_deck: Path, target_deck: Path) -> None:
 
 
 def missing_assets(deck: dict, deck_path: Path) -> list[str]:
-    missing = []
-    for item in deck["slides"]:
-        image = item.get("image")
-        if image and not asset_file(deck_path, image["path"]).is_file():
-            missing.append(image["path"])
-    return sorted(set(missing))
+    return sorted({e["path"] for e in image_elements(deck) if not asset_file(deck_path, e["path"]).is_file()})
 
 
 def resolve_slide(deck: dict, ref: str) -> tuple[int, dict]:
-    try:
-        position = int(ref)
-    except ValueError:
-        position = 0
+    try: position = int(ref)
+    except ValueError: position = 0
     if position:
         if not 1 <= position <= len(deck["slides"]):
             raise ValueError(f"slide position out of range: {position}")
         return position - 1, deck["slides"][position - 1]
     for index, item in enumerate(deck["slides"]):
-        if item["id"] == ref:
-            return index, item
+        if item["id"] == ref: return index, item
     raise ValueError(f"unknown slide reference: {ref}")
+
+
+def resolve_element(slide_obj: dict, ref: str) -> tuple[int, dict]:
+    elements = slide_obj.get("elements", [])
+    try: position = int(ref)
+    except ValueError: position = 0
+    if position:
+        if not 1 <= position <= len(elements):
+            raise ValueError(f"element position out of range: {position}")
+        return position - 1, elements[position - 1]
+    for index, item in enumerate(elements):
+        if item["id"] == ref: return index, item
+    raise ValueError(f"unknown element reference: {ref}")
+
+
+def primary_image(slide_obj: dict) -> tuple[int, dict]:
+    for index, element in enumerate(slide_obj.get("elements", [])):
+        if element.get("type") == "image": return index, element
+    raise ValueError("slide has no image")
 
 
 def body_value(args: argparse.Namespace) -> str | None:
     body = getattr(args, "body", None)
     body_file = getattr(args, "body_file", None)
-    if body is not None and body_file is not None:
-        raise ValueError("use only one of --body and --body-file")
-    if body_file is None:
-        return body
-    if body_file == "-":
-        return sys.stdin.read()
+    if body is not None and body_file is not None: raise ValueError("use only one of --body and --body-file")
+    if body_file is None: return body
+    if body_file == "-": return sys.stdin.read()
     return Path(body_file).expanduser().read_text(encoding="utf-8")
 
 
+def notes_value(args: argparse.Namespace) -> str | None:
+    notes = getattr(args, "notes", None)
+    notes_file = getattr(args, "notes_file", None)
+    if notes is not None and notes_file is not None: raise ValueError("use only one of --notes and --notes-file")
+    if notes_file is None: return notes
+    if notes_file == "-": return sys.stdin.read()
+    return Path(notes_file).expanduser().read_text(encoding="utf-8")
+
+
 def emit(value: object, as_json: bool = False) -> None:
-    if as_json:
-        print(json.dumps(value, ensure_ascii=False, indent=2))
-    elif isinstance(value, str):
-        print(value)
-    elif isinstance(value, dict) and "message" in value:
-        print(value["message"])
-    else:
-        print(json.dumps(value, ensure_ascii=False, indent=2))
+    if as_json: print(json.dumps(value, ensure_ascii=False, indent=2))
+    elif isinstance(value, str): print(value)
+    elif isinstance(value, dict) and "message" in value: print(value["message"])
+    else: print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
 def app_path() -> Path:
     for candidate in APP_CANDIDATES:
-        if candidate.exists():
-            return candidate
+        if candidate.exists(): return candidate
     raise ValueError("Morrow Presenter.app not found; run scripts/build-app.sh")
 
 
 def launch(deck_path: Path, present: bool = False, slide_ref: str | None = None) -> None:
     app = app_path()
     args = ["open"]
-    if not present:
-        args.append("-g")
+    if not present: args.append("-g")
     args.extend(["-na", str(app), "--args"])
-    if present:
-        args.append("--present")
-    if slide_ref:
-        args.extend(["--slide", slide_ref])
+    if present: args.append("--present")
+    if slide_ref: args.extend(["--slide", slide_ref])
     args.append(str(deck_path.expanduser().resolve()))
     subprocess.run(args, check=True)
 
 
+def image_schema() -> dict:
+    return {"type":"object","required":["id","type","path","x","y","width","height","intrinsicWidth","intrinsicHeight","crop"],"properties":{
+        "id":{"type":"string"},"type":{"const":"image"},"path":{"type":"string","minLength":1},"alt":{"type":"string"},
+        "x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},
+        "intrinsicWidth":{"type":"number","exclusiveMinimum":0},"intrinsicHeight":{"type":"number","exclusiveMinimum":0},"rotation":{"type":"number"},"opacity":{"type":"number","minimum":0,"maximum":1},"locked":{"type":"boolean"},
+        "crop":{"type":"object","required":["left","top","right","bottom"],"properties":{k:{"type":"number","minimum":0,"maximum":95} for k in ("left","top","right","bottom")}}
+    }}
+
+
 def schema() -> dict:
+    common = {
+        "id": {"type": "string"},
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "width": {"type": "number", "exclusiveMinimum": 0},
+        "height": {"type": "number", "exclusiveMinimum": 0},
+        "rotation": {"type": "number"},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+        "locked": {"type": "boolean"},
+    }
+    text_style = {
+        "text": {"type": "string"}, "fontFamily": {"type": "string"},
+        "fontSize": {"type": "number"}, "fontWeight": {"type": "integer"},
+        "italic": {"type": "boolean"}, "underline": {"type": "boolean"},
+        "color": {"type": "string"}, "align": {"enum": list(VALID_ALIGN)},
+        "verticalAlign": {"enum": list(VALID_VALIGN)}, "fill": {"type": "string"},
+        "stroke": {"type": "string"}, "strokeWidth": {"type": "number"},
+    }
+    text_element = {
+        "type": "object",
+        "required": ["id", "type", "text", "x", "y", "width", "height"],
+        "properties": {**common, "type": {"const": "text"}, **text_style},
+    }
+    shape_element = {
+        "type": "object",
+        "required": ["id", "type", "shape", "x", "y", "width", "height"],
+        "properties": {**common, "type": {"const": "shape"}, "shape": {"enum": list(VALID_SHAPES)}, **text_style},
+    }
+    slide_schema = {
+        "type": "object",
+        "required": ["id", "layout", "title", "body", "background", "notes", "transition", "elements"],
+        "properties": {
+            "id": {"type": "string"}, "layout": {"enum": list(VALID_LAYOUTS)},
+            "title": {"type": "string"}, "body": {"type": "string"},
+            "background": {"type": "string"}, "notes": {"type": "string"},
+            "transition": {
+                "type": "object", "required": ["type", "duration"],
+                "properties": {"type": {"enum": list(VALID_TRANSITIONS)}, "duration": {"type": "number"}},
+            },
+            "elements": {"type": "array", "items": {"oneOf": [text_element, shape_element, image_schema()]}},
+        },
+    }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Morrow Presenter deck",
-        "type": "object",
+        "title": "Morrow Presenter deck", "type": "object",
         "required": ["version", "title", "slides"],
         "properties": {
-            "version": {"const": VERSION},
-            "title": {"type": "string"},
+            "version": {"const": VERSION}, "title": {"type": "string"},
             "selectedId": {"type": "string"},
-            "slides": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                    "type": "object",
-                    "required": ["id", "layout", "title", "body"],
-                    "properties": {
-                        "id": {"type": "string"},
-                        "layout": {"enum": list(VALID_LAYOUTS)},
-                        "title": {"type": "string"},
-                        "body": {"type": "string"},
-                        "image": {
-                            "type": "object",
-                            "required": ["path", "alt", "x", "y", "width", "height", "intrinsicWidth", "intrinsicHeight", "crop"],
-                            "properties": {
-                                "path": {"type": "string", "minLength": 1},
-                                "alt": {"type": "string"},
-                                "x": {"type": "number"},
-                                "y": {"type": "number"},
-                                "width": {"type": "number", "exclusiveMinimum": 0},
-                                "height": {"type": "number", "exclusiveMinimum": 0},
-                                "intrinsicWidth": {"type": "number", "exclusiveMinimum": 0},
-                                "intrinsicHeight": {"type": "number", "exclusiveMinimum": 0},
-                                "crop": {
-                                    "type": "object",
-                                    "required": ["left", "top", "right", "bottom"],
-                                    "properties": {
-                                        "left": {"type": "number", "minimum": 0, "maximum": 95},
-                                        "top": {"type": "number", "minimum": 0, "maximum": 95},
-                                        "right": {"type": "number", "minimum": 0, "maximum": 95},
-                                        "bottom": {"type": "number", "minimum": 0, "maximum": 95},
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
+            "slides": {"type": "array", "minItems": 1, "items": slide_schema},
         },
     }
 
-
 def capabilities() -> dict:
     return {
-        "name": "Morrow Presenter",
-        "cli": "morrow-presenter",
-        "deck_format": "morrowdeck-json-v1",
-        "shell_first": True,
-        "requires_mcp": False,
-        "slide_refs": "1-based position or stable slide id",
-        "layouts": list(VALID_LAYOUTS),
-        "image_geometry": "slide-relative percentages: x, y, width, height",
-        "image_scaling": "proportional; width changes recompute height from intrinsic aspect ratio",
-        "image_crop": "non-destructive mask insets: left, top, right, bottom percentages",
-        "image_storage": f"relative files under {ASSET_DIR}/",
-        "operations": [
-            "new", "validate", "info", "slides", "get", "title", "add", "set",
-            "duplicate", "delete", "move", "image-set", "image-update", "image-remove",
-            "open", "present", "export", "schema",
-        ],
-        "agent_docs": str(Path(__file__).resolve().parents[1] / "docs" / "AGENT.md"),
+        "name":"Morrow Presenter","cli":"morrow-presenter","deck_format":"morrowdeck-json-v1","shell_first":True,"requires_mcp":False,
+        "slide_refs":"1-based position or stable slide id","element_refs":"1-based position or stable element id","layouts":list(VALID_LAYOUTS),
+        "element_types":list(VALID_ELEMENT_TYPES),"shapes":list(VALID_SHAPES),"transitions":list(VALID_TRANSITIONS),
+        "features":["multi-object canvas","text boxes","basic shapes","multiple images","non-destructive crop","rotation","opacity","z-order","align/distribute","slide backgrounds","speaker notes","fade transitions"],
+        "image_storage":f"relative files under {ASSET_DIR}/",
+        "operations":["new","validate","info","slides","get","title","add","set","duplicate","delete","move","slide-style","elements","element-get","element-add-text","element-add-shape","element-add-image","element-update","element-delete","element-duplicate","element-order","element-align","image-set","image-update","image-remove","open","present","export","schema","capabilities"],
+        "agent_docs":str(Path(__file__).resolve().parents[1]/"docs"/"AGENT.md"),
     }
 
 
-def add_json(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-
-
-def add_body_options(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("--body")
-    sp.add_argument("--body-file", help="read body from a UTF-8 file, or - for stdin")
+def add_json(sp): sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+def add_body_options(sp):
+    sp.add_argument("--body"); sp.add_argument("--body-file", help="read body from UTF-8 file, or - for stdin")
+def add_notes_options(sp):
+    sp.add_argument("--notes"); sp.add_argument("--notes-file", help="read notes from UTF-8 file, or - for stdin")
+def add_geometry(sp, *, defaults=False):
+    sp.add_argument("--x", type=float, default=10.0 if defaults else None)
+    sp.add_argument("--y", type=float, default=10.0 if defaults else None)
+    sp.add_argument("--width", type=float, default=35.0 if defaults else None)
+    sp.add_argument("--height", type=float, default=18.0 if defaults else None)
+def add_text_style(sp, *, defaults=False):
+    sp.add_argument("--font-family", default="Inter" if defaults else None)
+    sp.add_argument("--font-size", type=float, default=28.0 if defaults else None)
+    sp.add_argument("--font-weight", type=int, default=400 if defaults else None)
+    sp.add_argument("--italic", dest="italic", action="store_const", const=True, default=False if defaults else None)
+    sp.add_argument("--no-italic", dest="italic", action="store_const", const=False)
+    sp.add_argument("--underline", dest="underline", action="store_const", const=True, default=False if defaults else None)
+    sp.add_argument("--no-underline", dest="underline", action="store_const", const=False)
+    sp.add_argument("--color", default="#202124" if defaults else None)
+    sp.add_argument("--align", choices=VALID_ALIGN, default="left" if defaults else None)
+    sp.add_argument("--vertical-align", choices=VALID_VALIGN, default="top" if defaults else None)
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="morrow-presenter", description="Shell-first slide deck editor and presenter")
+    p=argparse.ArgumentParser(prog="morrow-presenter", description="Shell-first slide deck editor and presenter")
     p.add_argument("--version", action="version", version=f"Morrow Presenter CLI format-v{VERSION}")
-    subs = p.add_subparsers(dest="command", required=True)
-
-    sp = subs.add_parser("capabilities", help="describe the agent-operable command surface")
-    add_json(sp)
-    sp = subs.add_parser("schema", help="print the deck JSON schema")
-    add_json(sp)
-
-    sp = subs.add_parser("new", help="create a new .morrowdeck")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("--title", default="Untitled deck")
-    sp.add_argument("--force", action="store_true")
-    add_json(sp)
-
-    for name, help_text in (("validate", "validate and normalize-check a deck"), ("info", "show deck metadata"), ("slides", "list slides")):
-        sp = subs.add_parser(name, help=help_text)
-        sp.add_argument("path", type=Path)
-        add_json(sp)
-
-    sp = subs.add_parser("get", help="get one slide")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    add_json(sp)
-
-    sp = subs.add_parser("title", help="set deck title")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("title")
-    add_json(sp)
-
-    sp = subs.add_parser("add", help="add a slide")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("--after", help="insert after slide ref; default appends")
-    sp.add_argument("--layout", choices=VALID_LAYOUTS, default="title-body")
-    sp.add_argument("--title", default="")
-    add_body_options(sp)
-    add_json(sp)
-
-    sp = subs.add_parser("set", help="change fields on one slide")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    sp.add_argument("--layout", choices=VALID_LAYOUTS)
-    sp.add_argument("--title")
-    add_body_options(sp)
-    add_json(sp)
-
-    sp = subs.add_parser("duplicate", help="duplicate one slide after itself")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    add_json(sp)
-
-    sp = subs.add_parser("delete", help="delete one slide; a deck always retains at least one slide")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    add_json(sp)
-
-    sp = subs.add_parser("move", help="move a slide to a 1-based position")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    sp.add_argument("--to", type=int, required=True)
-    add_json(sp)
-
-    sp = subs.add_parser("image-set", help="copy an image into deck assets and attach it as a free-positioned slide element")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    sp.add_argument("image", type=Path)
-    sp.add_argument("--x", type=float, default=55.0, help="left coordinate as percent of slide width")
-    sp.add_argument("--y", type=float, help="top coordinate as percent of slide height; default vertically centers the image")
-    sp.add_argument("--width", type=float, default=DEFAULT_IMAGE_WIDTH, help="full uncropped image width as percent of slide width")
-    sp.add_argument("--alt", default="")
-    add_json(sp)
-
-    sp = subs.add_parser("image-update", help="move, proportionally resize, crop-mask, or change alt text for an attached image")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    sp.add_argument("--x", type=float)
-    sp.add_argument("--y", type=float)
-    sp.add_argument("--width", type=float, help="set full image width; height is recomputed proportionally")
-    sp.add_argument("--scale", type=float, help="multiply width and height by this positive factor")
-    sp.add_argument("--crop-left", type=float)
-    sp.add_argument("--crop-top", type=float)
-    sp.add_argument("--crop-right", type=float)
-    sp.add_argument("--crop-bottom", type=float)
-    sp.add_argument("--reset-crop", action="store_true")
-    sp.add_argument("--alt")
-    add_json(sp)
-
-    sp = subs.add_parser("image-remove", help="detach an image from a slide; the shared asset file is retained")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("slide")
-    add_json(sp)
-
-    for name, help_text in (("open", "open deck in the Mac app"), ("present", "open deck directly in presentation mode")):
-        sp = subs.add_parser(name, help=help_text)
-        sp.add_argument("path", type=Path)
-        sp.add_argument("--slide", help="initial slide ref")
-        add_json(sp)
-
-    sp = subs.add_parser("export", help="write a normalized JSON copy")
-    sp.add_argument("path", type=Path)
-    sp.add_argument("output", type=Path)
-    add_json(sp)
+    subs=p.add_subparsers(dest="command", required=True)
+    sp=subs.add_parser("capabilities"); add_json(sp)
+    sp=subs.add_parser("schema"); add_json(sp)
+    sp=subs.add_parser("new"); sp.add_argument("path",type=Path); sp.add_argument("--title",default="Untitled deck"); sp.add_argument("--force",action="store_true"); add_json(sp)
+    for name in ("validate","info","slides"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); add_json(sp)
+    sp=subs.add_parser("get"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
+    sp=subs.add_parser("title"); sp.add_argument("path",type=Path); sp.add_argument("title"); add_json(sp)
+    sp=subs.add_parser("add"); sp.add_argument("path",type=Path); sp.add_argument("--after"); sp.add_argument("--layout",choices=VALID_LAYOUTS,default="title-body"); sp.add_argument("--title",default=""); add_body_options(sp); add_json(sp)
+    sp=subs.add_parser("set"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--layout",choices=VALID_LAYOUTS); sp.add_argument("--title"); add_body_options(sp); add_json(sp)
+    for name in ("duplicate","delete"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
+    sp=subs.add_parser("move"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--to",type=int,required=True); add_json(sp)
+    sp=subs.add_parser("slide-style"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--background"); add_notes_options(sp); sp.add_argument("--transition",choices=VALID_TRANSITIONS); sp.add_argument("--transition-duration",type=float); add_json(sp)
+    sp=subs.add_parser("elements"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
+    sp=subs.add_parser("element-get"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
+    sp=subs.add_parser("element-add-text"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("text",nargs="?",default="Text"); add_geometry(sp,defaults=True); add_text_style(sp,defaults=True); sp.add_argument("--fill",default="transparent"); sp.add_argument("--stroke",default="transparent"); sp.add_argument("--stroke-width",type=float,default=0.0); add_json(sp)
+    sp=subs.add_parser("element-add-shape"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--shape",choices=VALID_SHAPES,default="rect"); sp.add_argument("--text",default=""); add_geometry(sp,defaults=True); add_text_style(sp,defaults=True); sp.add_argument("--fill",default="#e8e8e4"); sp.add_argument("--stroke",default="#4b4d50"); sp.add_argument("--stroke-width",type=float,default=1.5); add_json(sp)
+    sp=subs.add_parser("element-add-image"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("image",type=Path); sp.add_argument("--x",type=float,default=55.0); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float,default=DEFAULT_IMAGE_WIDTH); sp.add_argument("--alt",default=""); add_json(sp)
+    sp=subs.add_parser("element-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_geometry(sp); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--text"); sp.add_argument("--alt"); sp.add_argument("--shape",choices=VALID_SHAPES); add_text_style(sp); sp.add_argument("--fill"); sp.add_argument("--stroke"); sp.add_argument("--stroke-width",type=float); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--lock",dest="locked",action="store_const",const=True); sp.add_argument("--unlock",dest="locked",action="store_const",const=False); add_json(sp)
+    for name in ("element-delete","element-duplicate"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); add_json(sp)
+    sp=subs.add_parser("element-order"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("element"); group=sp.add_mutually_exclusive_group(required=True); group.add_argument("--to-front",action="store_true"); group.add_argument("--to-back",action="store_true"); group.add_argument("--forward",action="store_true"); group.add_argument("--backward",action="store_true"); group.add_argument("--index",type=int); add_json(sp)
+    sp=subs.add_parser("element-align"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("mode",choices=VALID_ALIGN_MODES); sp.add_argument("elements",nargs="+"); add_json(sp)
+    # Compatibility aliases for the old single-image surface: operate on the first image.
+    sp=subs.add_parser("image-set"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("image",type=Path); sp.add_argument("--x",type=float,default=55.0); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float,default=DEFAULT_IMAGE_WIDTH); sp.add_argument("--alt",default=""); add_json(sp)
+    sp=subs.add_parser("image-update"); sp.add_argument("path",type=Path); sp.add_argument("slide"); sp.add_argument("--x",type=float); sp.add_argument("--y",type=float); sp.add_argument("--width",type=float); sp.add_argument("--scale",type=float); sp.add_argument("--rotation",type=float); sp.add_argument("--opacity",type=float); sp.add_argument("--crop-left",type=float); sp.add_argument("--crop-top",type=float); sp.add_argument("--crop-right",type=float); sp.add_argument("--crop-bottom",type=float); sp.add_argument("--reset-crop",action="store_true"); sp.add_argument("--alt"); add_json(sp)
+    sp=subs.add_parser("image-remove"); sp.add_argument("path",type=Path); sp.add_argument("slide"); add_json(sp)
+    for name in ("open","present"):
+        sp=subs.add_parser(name); sp.add_argument("path",type=Path); sp.add_argument("--slide"); add_json(sp)
+    sp=subs.add_parser("export"); sp.add_argument("path",type=Path); sp.add_argument("output",type=Path); add_json(sp)
     return p
 
 
+def make_image_element(path: Path, source: Path, x: float, y: float|None, width: float, alt: str) -> dict:
+    rel=import_asset(path, source); iw,ih=image_dimensions(source); width=_clamp(width,1.0,400.0); height=image_height_for_width(width,iw,ih); y=(100-height)/2 if y is None else y
+    return normalize_image_element({"type":"image","path":rel,"alt":alt,"x":x,"y":y,"width":width,"intrinsicWidth":iw,"intrinsicHeight":ih,"crop":{"left":0,"top":0,"right":0,"bottom":0}})
+
+
+def apply_element_update(element: dict, args: argparse.Namespace) -> bool:
+    changed=False
+    kind=element["type"]
+    if args.scale is not None:
+        if args.scale <= 0: raise ValueError("--scale must be positive")
+        element["width"]=_clamp(element["width"]*args.scale,.5,400.0)
+        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"])
+        else: element["height"]=_clamp(element["height"]*args.scale,.5,400.0)
+        changed=True
+    if args.width is not None:
+        element["width"]=_clamp(args.width,.5,400.0)
+        if kind=="image": element["height"]=image_height_for_width(element["width"],element["intrinsicWidth"],element["intrinsicHeight"])
+        changed=True
+    if args.height is not None:
+        if kind=="image":
+            # Images stay proportional: height requests derive width.
+            target=_clamp(args.height,.5,400.0); ratio=element["width"]/element["height"] if element["height"] else 1; element["height"]=target; element["width"]=_clamp(target*ratio,.5,400.0)
+        else: element["height"]=_clamp(args.height,.5,400.0)
+        changed=True
+    mapping=(("x",args.x),("y",args.y),("rotation",args.rotation),("opacity",args.opacity),("text",args.text),("alt",args.alt),("shape",args.shape),("fontFamily",args.font_family),("fontSize",args.font_size),("fontWeight",args.font_weight),("italic",args.italic),("underline",args.underline),("color",args.color),("align",args.align),("verticalAlign",args.vertical_align),("fill",args.fill),("stroke",args.stroke),("strokeWidth",args.stroke_width),("locked",args.locked))
+    for key,value in mapping:
+        if value is None: continue
+        allowed = (key in {"x","y","rotation","opacity","locked"}) or (kind=="image" and key=="alt") or (kind=="text" and key in {"text","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"}) or (kind=="shape" and key in {"text","shape","fontFamily","fontSize","fontWeight","italic","underline","color","align","verticalAlign","fill","stroke","strokeWidth"})
+        if allowed: element[key]=value; changed=True
+    crop_values={"left":args.crop_left,"top":args.crop_top,"right":args.crop_right,"bottom":args.crop_bottom}
+    if args.reset_crop:
+        if kind!="image": raise ValueError("crop options require an image element")
+        element["crop"]={"left":0,"top":0,"right":0,"bottom":0}; changed=True
+    if any(v is not None for v in crop_values.values()):
+        if kind!="image": raise ValueError("crop options require an image element")
+        crop=dict(element["crop"])
+        for key,value in crop_values.items():
+            if value is not None: crop[key]=value
+        element["crop"]=normalize_crop(crop); changed=True
+    return changed
+
+
+def align_elements(slide_obj: dict, refs: list[str], mode: str) -> list[dict]:
+    resolved=[]; seen=set()
+    for ref in refs:
+        _,e=resolve_element(slide_obj,ref)
+        if e["id"] not in seen: resolved.append(e); seen.add(e["id"])
+    if not resolved: raise ValueError("no elements selected")
+    if mode.startswith("distribute") and len(resolved)<3: raise ValueError("distribution requires at least 3 elements")
+    min_x=min(e["x"] for e in resolved); max_r=max(e["x"]+e["width"] for e in resolved); min_y=min(e["y"] for e in resolved); max_b=max(e["y"]+e["height"] for e in resolved)
+    if mode=="left":
+        for e in resolved: e["x"]=min_x
+    elif mode=="center":
+        target=(min_x+max_r)/2
+        for e in resolved: e["x"]=target-e["width"]/2
+    elif mode=="right":
+        for e in resolved: e["x"]=max_r-e["width"]
+    elif mode=="top":
+        for e in resolved: e["y"]=min_y
+    elif mode=="middle":
+        target=(min_y+max_b)/2
+        for e in resolved: e["y"]=target-e["height"]/2
+    elif mode=="bottom":
+        for e in resolved: e["y"]=max_b-e["height"]
+    elif mode=="distribute-h":
+        ordered=sorted(resolved,key=lambda e:e["x"]); total=sum(e["width"] for e in ordered); gap=(max_r-min_x-total)/(len(ordered)-1); cursor=min_x
+        for e in ordered: e["x"]=cursor; cursor+=e["width"]+gap
+    elif mode=="distribute-v":
+        ordered=sorted(resolved,key=lambda e:e["y"]); total=sum(e["height"] for e in ordered); gap=(max_b-min_y-total)/(len(ordered)-1); cursor=min_y
+        for e in ordered: e["y"]=cursor; cursor+=e["height"]+gap
+    return resolved
+
+
 def main() -> int:
-    args = parser().parse_args()
+    args=parser().parse_args()
     try:
-        cmd = args.command
-        if cmd == "capabilities":
-            emit(capabilities(), args.json)
-            return 0
-        if cmd == "schema":
-            emit(schema(), True)
-            return 0
-        if cmd == "new":
-            path = args.path.expanduser().resolve()
-            if path.exists() and not args.force:
-                raise ValueError(f"refusing to overwrite existing deck: {path}; use --force")
-            write_deck(path, new_deck(args.title))
-            emit({"ok": True, "path": str(path), "message": f"Created {path}"}, args.json)
-            return 0
-
-        deck = read_deck(args.path.expanduser())
-        path = args.path.expanduser().resolve()
-
-        if cmd == "validate":
-            missing = missing_assets(deck, path)
-            if missing:
-                raise ValueError("missing image assets: " + ", ".join(missing))
-            emit({"ok": True, "path": str(path), "slides": len(deck["slides"]), "images": sum(1 for s in deck["slides"] if s.get("image")), "format_version": VERSION, "message": f"Valid deck: {len(deck['slides'])} slides"}, args.json)
-        elif cmd == "info":
-            emit({"path": str(path), "title": deck["title"], "slides": len(deck["slides"]), "images": sum(1 for s in deck["slides"] if s.get("image")), "selectedId": deck["selectedId"], "format_version": VERSION}, args.json)
-        elif cmd == "slides":
-            items = [{"position": i + 1, **item} for i, item in enumerate(deck["slides"])]
-            if args.json:
-                emit(items, True)
+        cmd=args.command
+        if cmd=="capabilities": emit(capabilities(),args.json); return 0
+        if cmd=="schema": emit(schema(),True); return 0
+        if cmd=="new":
+            path=args.path.expanduser().resolve()
+            if path.exists() and not args.force: raise ValueError(f"refusing to overwrite existing deck: {path}; use --force")
+            write_deck(path,new_deck(args.title)); emit({"ok":True,"path":str(path),"message":f"Created {path}"},args.json); return 0
+        deck=read_deck(args.path.expanduser()); path=args.path.expanduser().resolve()
+        if cmd=="validate":
+            missing=missing_assets(deck,path)
+            if missing: raise ValueError("missing image assets: "+", ".join(missing))
+            elements=sum(len(s["elements"]) for s in deck["slides"]); images=sum(1 for _ in image_elements(deck)); emit({"ok":True,"path":str(path),"slides":len(deck["slides"]),"elements":elements,"images":images,"format_version":VERSION,"message":f"Valid deck: {len(deck['slides'])} slides, {elements} elements"},args.json)
+        elif cmd=="info":
+            emit({"path":str(path),"title":deck["title"],"slides":len(deck["slides"]),"elements":sum(len(s["elements"]) for s in deck["slides"]),"images":sum(1 for _ in image_elements(deck)),"selectedId":deck["selectedId"],"format_version":VERSION},args.json)
+        elif cmd=="slides":
+            items=[{"position":i+1,**item} for i,item in enumerate(deck["slides"])]
+            if args.json: emit(items,True)
             else:
-                for item in items:
-                    print(f"{item['position']:>3}  {item['id']}  {item['layout']:<10}  {item['title'] or '(untitled)'}")
-        elif cmd == "get":
-            index, item = resolve_slide(deck, args.slide)
-            emit({"position": index + 1, **item}, True if args.json else False)
-        elif cmd == "title":
-            deck["title"] = args.title
-            write_deck(path, deck)
-            emit({"ok": True, "title": args.title, "message": f"Deck title set to: {args.title}"}, args.json)
-        elif cmd == "add":
-            body = body_value(args) or ""
-            item = slide(args.title, body, args.layout)
-            if args.after:
-                index, _ = resolve_slide(deck, args.after)
-                insert_at = index + 1
+                for item in items: print(f"{item['position']:>3}  {item['id']}  {item['layout']:<10}  {len(item['elements']):>2} objects  {item['title'] or '(untitled)'}")
+        elif cmd=="get":
+            index,item=resolve_slide(deck,args.slide); emit({"position":index+1,**item},args.json)
+        elif cmd=="title":
+            deck["title"]=args.title; write_deck(path,deck); emit({"ok":True,"title":args.title,"message":f"Deck title set to: {args.title}"},args.json)
+        elif cmd=="add":
+            item=slide(args.title,body_value(args) or "",args.layout); insert_at=resolve_slide(deck,args.after)[0]+1 if args.after else len(deck["slides"]); deck["slides"].insert(insert_at,item); deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"position":insert_at+1,**item,"message":f"Added slide {insert_at+1}"},args.json)
+        elif cmd=="set":
+            index,item=resolve_slide(deck,args.slide); body=body_value(args); changed=False
+            for key,value in (("layout",args.layout),("title",args.title),("body",body)):
+                if value is not None: item[key]=value; changed=True
+            if not changed: raise ValueError("set requires --layout, --title, --body, or --body-file")
+            deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"position":index+1,**item,"message":f"Updated slide {index+1}"},args.json)
+        elif cmd=="duplicate":
+            index,source=resolve_slide(deck,args.slide); item=copy.deepcopy(source); item["id"]=str(uuid.uuid4());
+            for e in item["elements"]: e["id"]=str(uuid.uuid4())
+            deck["slides"].insert(index+1,item); deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"position":index+2,**item,"message":f"Duplicated slide {index+1} to {index+2}"},args.json)
+        elif cmd=="delete":
+            index,item=resolve_slide(deck,args.slide)
+            if len(deck["slides"])==1: deck["slides"][0]=slide(); deck["slides"][0]["id"]=item["id"]; deck["selectedId"]=item["id"]; message="Cleared the only slide"
+            else: deck["slides"].pop(index); selected=deck["slides"][min(index,len(deck["slides"])-1)]; deck["selectedId"]=selected["id"]; message=f"Deleted slide {index+1}"
+            write_deck(path,deck); emit({"ok":True,"message":message},args.json)
+        elif cmd=="move":
+            index,item=resolve_slide(deck,args.slide)
+            if not 1<=args.to<=len(deck["slides"]): raise ValueError(f"--to must be between 1 and {len(deck['slides'])}")
+            deck["slides"].pop(index); deck["slides"].insert(args.to-1,item); deck["selectedId"]=item["id"]; write_deck(path,deck); emit({"ok":True,"id":item["id"],"position":args.to,"message":f"Moved slide to {args.to}"},args.json)
+        elif cmd=="slide-style":
+            index,item=resolve_slide(deck,args.slide); notes=notes_value(args); changed=False
+            if args.background is not None: item["background"]=args.background; changed=True
+            if notes is not None: item["notes"]=notes; changed=True
+            if args.transition is not None: item["transition"]["type"]=args.transition; changed=True
+            if args.transition_duration is not None: item["transition"]["duration"]=_clamp(args.transition_duration,.05,5); changed=True
+            if not changed: raise ValueError("slide-style requires background, notes, or transition options")
+            write_deck(path,deck); emit({"ok":True,"position":index+1,"background":item["background"],"notes":item["notes"],"transition":item["transition"],"message":f"Updated slide {index+1} style"},args.json)
+        elif cmd=="elements":
+            _,item=resolve_slide(deck,args.slide); emit([{"position":i+1,**e} for i,e in enumerate(item["elements"])],args.json)
+        elif cmd=="element-get":
+            _,item=resolve_slide(deck,args.slide); index,e=resolve_element(item,args.element); emit({"position":index+1,**e},args.json)
+        elif cmd=="element-add-text":
+            sidx,item=resolve_slide(deck,args.slide); e=normalize_text_element({"type":"text","text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added text box"},args.json)
+        elif cmd=="element-add-shape":
+            sidx,item=resolve_slide(deck,args.slide); e=normalize_shape_element({"type":"shape","shape":args.shape,"text":args.text,"x":args.x,"y":args.y,"width":args.width,"height":args.height,"fontFamily":args.font_family,"fontSize":args.font_size,"fontWeight":args.font_weight,"italic":args.italic,"underline":args.underline,"color":args.color,"align":args.align,"verticalAlign":args.vertical_align,"fill":args.fill,"stroke":args.stroke,"strokeWidth":args.stroke_width}); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":f"Added {args.shape} shape"},args.json)
+        elif cmd=="element-add-image":
+            sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt); item["elements"].append(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":len(item["elements"]),"element":e,"message":"Added image"},args.json)
+        elif cmd=="element-update":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element)
+            if not apply_element_update(e,args): raise ValueError("element-update requires at least one update option")
+            item["elements"][eidx]=normalize_element(e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":eidx+1,"element":item["elements"][eidx],"message":"Updated element"},args.json)
+        elif cmd=="element-delete":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); item["elements"].pop(eidx); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"removed":e,"message":"Deleted element"},args.json)
+        elif cmd=="element-duplicate":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); dup=copy.deepcopy(e); dup["id"]=str(uuid.uuid4()); dup["x"]+=2; dup["y"]+=2; item["elements"].insert(eidx+1,dup); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":eidx+2,"element":dup,"message":"Duplicated element"},args.json)
+        elif cmd=="element-order":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=resolve_element(item,args.element); elements=item["elements"]; elements.pop(eidx)
+            if args.to_front: target=len(elements)
+            elif args.to_back: target=0
+            elif args.forward: target=min(len(elements),eidx+1)
+            elif args.backward: target=max(0,eidx-1)
             else:
-                insert_at = len(deck["slides"])
-            deck["slides"].insert(insert_at, item)
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": insert_at + 1, **item, "message": f"Added slide {insert_at + 1}"}, args.json)
-        elif cmd == "set":
-            index, item = resolve_slide(deck, args.slide)
-            body = body_value(args)
-            changed = False
-            for key, value in (("layout", args.layout), ("title", args.title), ("body", body)):
-                if value is not None:
-                    item[key] = value
-                    changed = True
-            if not changed:
-                raise ValueError("set requires at least one of --layout, --title, --body, --body-file")
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": index + 1, **item, "message": f"Updated slide {index + 1}"}, args.json)
-        elif cmd == "duplicate":
-            index, source = resolve_slide(deck, args.slide)
-            copy = dict(source)
-            copy["id"] = str(uuid.uuid4())
-            deck["slides"].insert(index + 1, copy)
-            deck["selectedId"] = copy["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": index + 2, **copy, "message": f"Duplicated slide {index + 1} to {index + 2}"}, args.json)
-        elif cmd == "delete":
-            index, item = resolve_slide(deck, args.slide)
-            if len(deck["slides"]) == 1:
-                deck["slides"][0] = {"id": item["id"], "layout": "title-body", "title": "", "body": ""}
-                deck["selectedId"] = item["id"]
-                message = "Cleared the only slide"
-            else:
-                deck["slides"].pop(index)
-                selected = deck["slides"][min(index, len(deck["slides"]) - 1)]
-                deck["selectedId"] = selected["id"]
-                message = f"Deleted slide {index + 1}"
-            write_deck(path, deck)
-            emit({"ok": True, "message": message}, args.json)
-        elif cmd == "move":
-            index, item = resolve_slide(deck, args.slide)
-            if not 1 <= args.to <= len(deck["slides"]):
-                raise ValueError(f"--to must be between 1 and {len(deck['slides'])}")
-            deck["slides"].pop(index)
-            deck["slides"].insert(args.to - 1, item)
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "id": item["id"], "position": args.to, "message": f"Moved slide to {args.to}"}, args.json)
-        elif cmd == "image-set":
-            index, item = resolve_slide(deck, args.slide)
-            rel = import_asset(path, args.image)
-            iw, ih = image_dimensions(args.image)
-            width = _clamp(args.width, 1.0, 400.0)
-            height = image_height_for_width(width, iw, ih)
-            y = args.y if args.y is not None else (100.0 - height) / 2.0
-            item["image"] = normalize_image({
-                "path": rel, "alt": args.alt, "x": args.x, "y": y,
-                "width": width, "intrinsicWidth": iw, "intrinsicHeight": ih,
-                "crop": {"left": 0, "top": 0, "right": 0, "bottom": 0},
-            })
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": index + 1, "image": item["image"], "message": f"Attached image to slide {index + 1}"}, args.json)
-        elif cmd == "image-update":
-            index, item = resolve_slide(deck, args.slide)
-            image = item.get("image")
-            if not image:
-                raise ValueError(f"slide {index + 1} has no image")
-            changed = False
-            if args.scale is not None:
-                if args.scale <= 0:
-                    raise ValueError("--scale must be positive")
-                image["width"] = _clamp(image["width"] * args.scale, 1.0, 400.0)
-                image["height"] = image_height_for_width(image["width"], image["intrinsicWidth"], image["intrinsicHeight"])
-                changed = True
-            if args.width is not None:
-                image["width"] = _clamp(args.width, 1.0, 400.0)
-                image["height"] = image_height_for_width(image["width"], image["intrinsicWidth"], image["intrinsicHeight"])
-                changed = True
-            for key, value in (("x", args.x), ("y", args.y), ("alt", args.alt)):
-                if value is not None:
-                    image[key] = value
-                    changed = True
-            if args.reset_crop:
-                image["crop"] = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
-                changed = True
-            crop_updates = {
-                "left": args.crop_left, "top": args.crop_top,
-                "right": args.crop_right, "bottom": args.crop_bottom,
-            }
-            if any(value is not None for value in crop_updates.values()):
-                crop = dict(image.get("crop", {}))
-                for key, value in crop_updates.items():
-                    if value is not None:
-                        crop[key] = value
-                image["crop"] = normalize_crop(crop)
-                changed = True
-            if not changed:
-                raise ValueError("image-update requires geometry, scale, crop, reset-crop, or alt options")
-            item["image"] = normalize_image(image)
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": index + 1, "image": item["image"], "message": f"Updated image on slide {index + 1}"}, args.json)
-        elif cmd == "image-remove":
-            index, item = resolve_slide(deck, args.slide)
-            removed = item.pop("image", None)
-            deck["selectedId"] = item["id"]
-            write_deck(path, deck)
-            emit({"ok": True, "position": index + 1, "removed": removed, "message": f"Removed image from slide {index + 1}"}, args.json)
-        elif cmd == "open":
-            if args.slide:
-                resolve_slide(deck, args.slide)
-            launch(path, present=False, slide_ref=args.slide)
-            emit({"ok": True, "path": str(path), "message": f"Opened {path}"}, args.json)
-        elif cmd == "present":
-            if args.slide:
-                resolve_slide(deck, args.slide)
-            launch(path, present=True, slide_ref=args.slide)
-            emit({"ok": True, "path": str(path), "message": f"Presenting {path}"}, args.json)
-        elif cmd == "export":
-            output = args.output.expanduser().resolve()
-            copy_assets(deck, path, output)
-            write_deck(output, deck)
-            emit({"ok": True, "path": str(output), "message": f"Exported {output}"}, args.json)
-        else:
-            raise ValueError(f"unsupported command: {cmd}")
+                if not 1<=args.index<=len(elements)+1: raise ValueError(f"--index must be between 1 and {len(elements)+1}")
+                target=args.index-1
+            elements.insert(target,e); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"position":target+1,"element":e,"message":"Reordered element"},args.json)
+        elif cmd=="element-align":
+            sidx,item=resolve_slide(deck,args.slide); updated=align_elements(item,args.elements,args.mode); write_deck(path,deck); emit({"ok":True,"slide":sidx+1,"mode":args.mode,"elements":updated,"message":f"Aligned {len(updated)} elements"},args.json)
+        elif cmd=="image-set":
+            sidx,item=resolve_slide(deck,args.slide); e=make_image_element(path,args.image,args.x,args.y,args.width,args.alt)
+            try: oldidx,_=primary_image(item); item["elements"][oldidx]=e; pos=oldidx+1
+            except ValueError: item["elements"].append(e); pos=len(item["elements"])
+            write_deck(path,deck); emit({"ok":True,"position":sidx+1,"elementPosition":pos,"image":e,"message":f"Set primary image on slide {sidx+1}"},args.json)
+        elif cmd=="image-update":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=primary_image(item)
+            # Reuse generic update by supplying missing generic attributes expected by helper.
+            for attr in ("height","text","shape","font_family","font_size","font_weight","italic","underline","color","align","vertical_align","fill","stroke","stroke_width","locked"):
+                if not hasattr(args,attr): setattr(args,attr,None)
+            if not apply_element_update(e,args): raise ValueError("image-update requires at least one update option")
+            item["elements"][eidx]=normalize_image_element(e); write_deck(path,deck); emit({"ok":True,"position":sidx+1,"image":item["elements"][eidx],"message":f"Updated primary image on slide {sidx+1}"},args.json)
+        elif cmd=="image-remove":
+            sidx,item=resolve_slide(deck,args.slide); eidx,e=primary_image(item); item["elements"].pop(eidx); write_deck(path,deck); emit({"ok":True,"position":sidx+1,"removed":e,"message":f"Removed primary image from slide {sidx+1}"},args.json)
+        elif cmd=="open":
+            if args.slide: resolve_slide(deck,args.slide)
+            launch(path,False,args.slide); emit({"ok":True,"path":str(path),"message":f"Opened {path}"},args.json)
+        elif cmd=="present":
+            if args.slide: resolve_slide(deck,args.slide)
+            launch(path,True,args.slide); emit({"ok":True,"path":str(path),"message":f"Presenting {path}"},args.json)
+        elif cmd=="export":
+            output=args.output.expanduser().resolve(); copy_assets(deck,path,output); write_deck(output,deck); emit({"ok":True,"path":str(output),"message":f"Exported {output}"},args.json)
+        else: raise ValueError(f"unsupported command: {cmd}")
         return 0
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
-        print(f"morrow-presenter: {exc}", file=sys.stderr)
-        return 2
+    except (ValueError,OSError,subprocess.CalledProcessError) as exc:
+        print(f"morrow-presenter: {exc}",file=sys.stderr); return 2
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=="__main__": raise SystemExit(main())
