@@ -17,7 +17,7 @@ Slide 和 element 都支持：
 - 稳定 UUID；
 - 唯一 UUID 前缀（至少 6 个字符）。
 
-编辑器打开“组件标识”后会直接显示 `#序号 · 类型/名称 · 8位短ID`。8 位短 ID 可直接作为 CLI element ref；多步 mutation 仍优先保存/复用稳定 ID，因为增删和 z-order 会改变 position。
+编辑器打开“组件标识”后，普通 element 会显示 `#序号 · 类型/名称 · 8位短ID`，版式占位层显示 `@title` / `@body`。8 位短 ID 可直接作为 CLI element ref；`@title` 对应 `set <deck> <slide> --title ...`，`@body` 对应 `set <deck> <slide> --body ...`。多步 mutation 仍优先保存/复用稳定 ID，因为增删和 z-order 会改变 position。
 
 ## Slides
 

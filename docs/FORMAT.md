@@ -65,7 +65,7 @@
 
 ## Component identification overlay
 
-`view.showElementLabels` controls an editor-only identification overlay. When enabled, each element is labeled with its 1-based position, a derived type/name, and the first 8 characters of its stable UUID. Labels are not rendered in thumbnails, presentation mode, PDF, or PPTX exports. The CLI accepts a unique element-ID prefix of 6 or more characters, so the displayed 8-character ID can be used directly by an agent.
+`view.showElementLabels` controls an editor-only identification overlay. Generic elements are labeled with their 1-based position, derived type/name, and the first 8 characters of the stable UUID. Layout placeholders are labeled `@title` and `@body`; those map to the slide `title` and `body` fields rather than `elements[]`. Labels are not rendered in thumbnails, presentation mode, PDF, or PPTX exports. The CLI accepts a unique element-ID prefix of 6 or more characters, so the displayed 8-character ID can be used directly by an agent.
 
 ## Element common fields
 
